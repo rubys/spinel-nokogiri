@@ -1,5 +1,5 @@
 [package]
 name = "nokogiri"
-version = "0.1.0"
+version = "0.1.1"
 
 sources = ["sp_nokogiri.c", "libxml2/*.c"]

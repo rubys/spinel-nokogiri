@@ -80,7 +80,11 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   `add_previous_sibling`, `add_next_sibling`, `replace` (node or set),
   `unlink` / `remove`, `css`, `at_css`, `xpath`, `at_xpath`, `search`,
   `at`, `to_html`, `inner_html`; `Document#root`, `create_element`,
-  `create_text_node`, `encoding`; `NodeSet` (`each`, `map`, `select`,
+  `create_text_node`, `encoding`, `meta_encoding`;
+  `Nokogiri::HTML.fragment` / `HTML4::DocumentFragment` (parsed as the gem
+  parses a fragment without a context, and reparented into a real fragment
+  node, which is what libxml2's serializer keys its newlines on);
+  `NodeSet` (`each`, `map`, `select`,
   `find`, `find_index`, `first`, `last`, `[]`, `length`, `empty?`, `css`,
   `xpath`, `attribute`, `text`, `to_html`, `inner_html`, `remove`).
 - CSS: type and universal selectors, `#id`, `.class`, attribute
@@ -89,7 +93,8 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   sibling combinators, namespaces) raises `Nokogiri::CSS::SyntaxError`
   rather than guessing.
 - Not yet: `Nokogiri::HTML5` (the gem's vendored gumbo parser — the next
-  version), `Nokogiri::XML` documents, `DocumentFragment`, `Builder`,
+  version), `Nokogiri::XML` documents, a fragment parsed in a context
+  node, `Builder`,
   `Node.new`, moving nodes between documents.
 - libxml2 is built **without iconv**: it decodes UTF-8, UTF-16, ISO-8859-1
   and ASCII itself, which covers a UTF-8 String; a document declaring
@@ -119,6 +124,8 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
 - `test/queries_test.rb` — og: meta lookups, webmention discovery,
   campfire's Opengraph XPath, the CSS subset, attributes, `content=`
   escaping, `replace` with a set, whole-document serialization.
+- `test/fragment_test.rb` — fragments (campfire's turbo-stream test
+  helper) and `meta_encoding` (campfire's Opengraph).
 - `test/finalizer.rb` — the owners, released.
 
 The snapshots are the gem's answers (Nokogiri 1.19.4), frozen; no

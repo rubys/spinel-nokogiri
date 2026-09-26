@@ -307,6 +307,19 @@ sp_NokoNode *sp_NokoNode_create_text(sp_NokoNode *self, const char *text)
 	return sp_nk_wrap(self->cls_id, n, self->owner);
 }
 
+/* A document fragment node, as HTML4::DocumentFragment reparents a parse's
+   nodes into. Parentless, so listed (freed with the document). Its nodes
+   serialize as the gem's do: libxml2's HTML writer puts a newline after a
+   block element only under a NAMED parent, and a fragment has no name. */
+sp_NokoNode *sp_NokoNode_create_fragment(sp_NokoNode *self)
+{
+	xmlNodePtr n = xmlNewDocFragment(self->owner->doc);
+	pthread_mutex_lock(&sp_nk_lock);
+	sp_nk_list(self->owner, n);
+	pthread_mutex_unlock(&sp_nk_lock);
+	return sp_nk_wrap(self->cls_id, n, self->owner);
+}
+
 /* Unlink, listing the node with its document (freed with it). */
 void sp_NokoNode_unlink(sp_NokoNode *self)
 {

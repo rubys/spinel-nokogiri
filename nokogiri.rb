@@ -46,6 +46,7 @@ module NokogiriNodePackage
   native_method :__set_content,      [:string], :void,              "sp_NokoNode_set_content"
   native_method :__create_element,   [:string], :self,              "sp_NokoNode_create_element"
   native_method :__create_text,      [:string], :self,              "sp_NokoNode_create_text"
+  native_method :__create_fragment,  [], :self,                     "sp_NokoNode_create_fragment"
   native_method :__unlink,           [], :void,                     "sp_NokoNode_unlink"
   native_method :__add_previous_sibling, [:any], :self,             "sp_NokoNode_add_previous_sibling"
   native_method :__add_next_sibling, [:any], :self,                 "sp_NokoNode_add_next_sibling"
@@ -738,6 +739,82 @@ module Nokogiri
         ref = NokoNodeRef.new.__parse_html(html.to_s, "UTF-8", XML::ParseOptions::DEFAULT_HTML)
         Document.new(ref)
       end
+
+      # The gem's, verbatim in effect: a <meta charset>, else the charset of
+      # a <meta http-equiv="Content-Type">, else nil.
+      def meta_encoding
+        meta = at_xpath("//meta[@charset]")
+        return meta["charset"] unless meta.nil?
+        ct = meta_content_type
+        return nil if ct.nil?
+        m = ct["content"].to_s.match(/charset\s*=\s*([\w-]+)/i)
+        m.nil? ? nil : m[1]
+      end
+
+      private
+
+      def meta_content_type
+        xpath("//meta[@http-equiv and boolean(@content)]").find do |node|
+          node["http-equiv"].to_s.match?(/\AContent-Type\z/i)
+        end
+      end
+    end
+
+    # The gem's HTML4 fragment, parsed as it parses one without a context:
+    # the input inside `<html><body>`, and the fragment is the body's
+    # children (or the body itself when the input starts with one).
+    class DocumentFragment
+      def initialize(document, input = "")
+        tags = input.to_s
+        path = tags.match?(/\A\s*?<body/i) ? "/html/body" : "/html/body/node()"
+        @doc = Document.parse("<html><body>" + tags)
+        @frag = XML::Node.new(@doc.__ref.__create_fragment)
+        @doc.xpath(path).to_a.each { |child| @frag.add_child(child) }
+      end
+
+      def self.parse(tags)
+        DocumentFragment.new(nil, tags)
+      end
+
+      def document
+        @doc
+      end
+
+      def children
+        @frag.children
+      end
+
+      def css(*rules)
+        children.css(*rules)
+      end
+
+      def at_css(*rules)
+        children.css(*rules).first
+      end
+
+      def xpath(*paths)
+        children.xpath(*paths)
+      end
+
+      def search(*rules)
+        children.search(*rules)
+      end
+
+      def text
+        children.text
+      end
+
+      def to_html
+        children.to_html
+      end
+
+      def to_s
+        to_html
+      end
+    end
+
+    def self.fragment(tags)
+      DocumentFragment.parse(tags)
     end
   end
 

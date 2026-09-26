@@ -1,0 +1,22 @@
+"<turbo-stream action=\"append\" target=\"messages\"><template><p>hi</p></template></turbo-stream>"
+1
+["hi"]
+"<p>one</p> text <b>two</b>"
+3
+["one"]
+"<body>  <p>in body</p>\n</body>"
+1
+["in body"]
+""
+0
+[]
+"plain"
+1
+[]
+"<li>x</li><li>y</li>"
+2
+[]
+"utf-8"
+"ISO-8859-1"
+nil
+nil
