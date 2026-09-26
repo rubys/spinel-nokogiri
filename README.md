@@ -36,6 +36,14 @@ between 2.9 and 2.13. So the package carries 2.13.9, with the six patches
 from Nokogiri's `patches/libxml2/` applied (they are also in
 `libxml2/patches/`, for provenance).
 
+For HTML5 it carries the other parser Nokogiri vendors: **gumbo**, as
+Nokogiri 1.19.4 ships it in `gumbo-parser/src` (it began as nokogumbo's),
+unedited in `gumbo/`. Nokogiri's `gumbo.c` rebuilds gumbo's tree as a
+libxml2 tree and its `html_standard_serialize` writes one back out by the
+HTML standard's rules; both are C over libxml2, and are ported into
+`sp_nokogiri.c` off the Ruby C API, so an HTML5 document is the same
+libxml2 tree everything else here (XPath, CSS, editing) works on.
+
 ## How it is built
 
 - `libxml/` is libxml2's public headers, at the package root, so the
@@ -145,8 +153,23 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   `:not(p)`, `:has(a, b)` becomes `:has(a)` — this raises
   `Nokogiri::CSS::SyntaxError` instead; so do pseudo-elements (`::before`)
   and `*|name`.
-- Not yet: `Nokogiri::HTML5` (the gem's vendored gumbo parser — the next
-  version), an IO or file argument to a parse, `create_element`'s
+- `Nokogiri::HTML5` / `HTML5.parse` / `HTML5::Document.parse` (a
+  String, UTF-8) with gumbo's limits as keywords (`max_attributes`,
+  `max_errors`, `max_tree_depth`, `parse_noscript_content_as_text`; a
+  limit hit raises `ArgumentError`, as in the gem); `quirks_mode`;
+  `errors` (gumbo's caret diagnostics, kept up to `max_errors`, none by
+  default); SVG and MathML elements in their namespaces; the HTML
+  standard's serialization for `to_html` / `to_s` / `inner_html`; CSS
+  over any namespace (`*:name`, as the gem writes it for HTML5);
+  `HTML5.fragment` / `HTML5::DocumentFragment` in the context of nothing
+  (body), a tag name (`"tr"`, `"svg"`, `"math:mi"`) or a node (form
+  ancestors, annotation-xml encodings and the document's quirks mode
+  included); and markup edited in an HTML5 document is parsed by gumbo
+  in context (`tr.add_child("<td>…")`). `Node#document` answers the class
+  the document was made as (HTML5, HTML4 or XML).
+- Not yet: an IO or file argument to a parse, a non-UTF-8 String given to
+  `HTML5` (the gem re-encodes one), a block to `HTML5` parse,
+  `preserve_newline` and other `write_to` options, `HTML5::Builder`, `create_element`'s
   contents and attributes arguments, DTDs and validation, XPath variable
   bindings and custom functions, an XPath expression that is not a node
   set, `Builder`, `Node.new`, custom pseudo-class handlers, a block to
@@ -161,8 +184,9 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
 
 ## Requirements
 
-A C compiler; nothing else — libxml2 is compiled from `libxml2/` with the
-package (about ten seconds, once; `spin` caches the objects).
+A C compiler; nothing else — libxml2 and gumbo are compiled from
+`libxml2/` and `gumbo/` with the package (a few seconds, once; `spin`
+caches the objects).
 
 Spinel 5fc203aa or later (matz/spinel#5075 and #5076: before them, a
 multiple assignment to an index target — `link["href"], title, alt = …`,
@@ -196,7 +220,13 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
   namespaces, CSS and XPath over them), RSS, CDATA / comment / PI nodes,
   the XML serializer, errors recovered and strict, `remove_namespaces!`,
   namespace relinking.
-- `test/finalizer.rb` — the owners, released (HTML and XML documents,
+- `test/html5_test.rb` — HTML5: tree construction (misnesting, foster
+  parenting), SVG and MathML, serialization, quirks modes, errors and
+  limits, fragments in each kind of context, markup edited in context,
+  CSS.
+- `test/html5_corpus_test.rb` — the Markdowner corpus's 3404 documents
+  as HTML5 documents and fragments, with their error counts, and edited.
+- `test/finalizer.rb` — the owners, released (HTML, HTML5 and XML documents,
   markup edits, and nodes carried from throwaway documents into a kept
   one).
 
@@ -207,3 +237,7 @@ hand-authored expectations.
 
 MIT, like the gem. `libxml2/` and `libxml/` are libxml2's, under its MIT
 license (`libxml2/Copyright`); `libxml2/patches/` are Nokogiri's (MIT).
+`gumbo/` is gumbo's, under the Apache License 2.0 (`gumbo/LICENSE`, the
+text from Nokogiri's `LICENSE-DEPENDENCIES.md`). The parts of
+`sp_nokogiri.c` ported from Nokogiri's `gumbo.c` and `xml_node.c` are
+Nokogiri's (`gumbo.c` is Apache 2.0, from nokogumbo).

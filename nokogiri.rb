@@ -14,6 +14,12 @@ module NokogiriExt
   ffi_func :sp_noko_out,            [], :str
   ffi_func :sp_noko_live_documents, [], :int
   ffi_func :sp_noko_xpath_error,    [], :str
+  ffi_func :sp_noko_gumbo_status,   [], :str
+  ffi_func :sp_noko_parse_error_count,   [], :int
+  ffi_func :sp_noko_parse_error_level,   [:int], :int
+  ffi_func :sp_noko_parse_error_line,    [:int], :int
+  ffi_func :sp_noko_parse_error_column,  [:int], :int
+  ffi_func :sp_noko_parse_error_message, [:int], :str
 end
 
 # The native half of a node: one xmlNode plus the owner of its document
@@ -29,6 +35,12 @@ module NokogiriNodePackage
   native_method :__parse_html,       [:string, :string, :int], :self, "sp_NokoNode_parse_html"
   native_method :__parse_xml,        [:string, :string, :int], :self, "sp_NokoNode_parse_xml"
   native_method :__new_xml_document, [], :self,                     "sp_NokoNode_new_xml_document"
+  native_method :__parse_html5,      [:string, :int, :int, :int, :bool], :self, "sp_NokoNode_parse_html5"
+  native_method :__new_html5_document, [], :self,                   "sp_NokoNode_new_html5_document"
+  native_method :__html5?,           [], :bool,                     "sp_NokoNode_html5_p"
+  native_method :__quirks_mode,      [], :int,                      "sp_NokoNode_quirks_mode"
+  native_method :__html5_fragment,   [:string, :string, :int, :bool, :string, :bool, :int, :int, :int, :bool], :int, "sp_NokoNode_html5_fragment"
+  native_method :__html5_serialize,  [:bool], :int,                 "sp_NokoNode_html5_serialize"
   native_method :__error_count,      [], :int,                      "sp_NokoNode_error_count"
   native_method :__error_level,      [:int], :int,                  "sp_NokoNode_error_level"
   native_method :__error_line,       [:int], :int,                  "sp_NokoNode_error_line"
@@ -319,7 +331,7 @@ module Nokogiri
         parts << "#{@line}:#{@column}" unless (@line.nil? || @line == 0) && (@column.nil? || @column == 0)
         lv = @level == 3 ? "FATAL" : (@level == 2 ? "ERROR" : (@level == 1 ? "WARNING" : nil))
         parts << lv unless lv.nil?
-        parts << @text.to_s
+        parts << @text.to_s.chomp
         parts.join(": ")
       end
 
@@ -433,8 +445,10 @@ module Nokogiri
         @ref.__set_name(n.to_s)
       end
 
+      # The document, as the class it was made as: an HTML5, HTML4 or XML
+      # document.
       def document
-        Document.new(@ref.__document)
+        Document.wrap(@ref.__document)
       end
 
       def parent
@@ -851,6 +865,7 @@ module Nokogiri
 
       # The gem's: a fragment of markup parsed in this node's context.
       def fragment(tags)
+        return HTML5::DocumentFragment.new(document, tags, self) if @ref.__html5?
         return HTML4::DocumentFragment.new(document, tags, self) if document.html?
         DocumentFragment.new(document, tags, self)
       end
@@ -916,7 +931,7 @@ module Nokogiri
 
       def css(*rules)
         ns = Search.root_namespaces(self)
-        Search.xpath(self, CSS.translate(rules.join(", "), css_contexts, ns.key?("xmlns")), Search.encode(ns))
+        Search.xpath(self, CSS.translate(rules.join(", "), css_contexts, CSS.mode(self, ns)), Search.encode(ns))
       end
 
       def at_css(*rules)
@@ -939,8 +954,14 @@ module Nokogiri
 
       # ---- serialization -------------------------------------------------
 
+      # In an HTML5 document, the HTML standard's serialization (the gem's
+      # html_standard_serialize); otherwise libxml2's HTML writer.
       def to_html
-        @ref.__serialize(SaveOptions::DEFAULT_HTML)
+        if @ref.__html5?
+          @ref.__html5_serialize(false)
+        else
+          @ref.__serialize(SaveOptions::DEFAULT_HTML)
+        end
         NokogiriExt.sp_noko_out
       end
 
@@ -970,6 +991,12 @@ module Nokogiri
     end
 
     class Document < Node
+      def self.wrap(ref)
+        return HTML5::Document.new(ref) if ref.__html5?
+        return HTML4::Document.new(ref) if ref.__type == HTML_DOCUMENT_NODE
+        Document.new(ref)
+      end
+
       def root
         c = child
         while c && !c.element?
@@ -1376,7 +1403,7 @@ module Nokogiri
       def css(*rules)
         return NodeSet.new([]) if @nodes.empty?
         ns = Search.root_namespaces(@nodes.first)
-        xp = CSS.translate(rules.join(", "), [".//", "self::"], ns.key?("xmlns"))
+        xp = CSS.translate(rules.join(", "), [".//", "self::"], CSS.mode(@nodes.first, ns))
         each_match(xp, Search.encode(ns))
       end
 
@@ -1579,19 +1606,27 @@ module Nokogiri
     end
 
     def self.xpath_for(selector)
-      translate(selector, ["//"], false).split(" | ")
+      translate(selector, ["//"], 0).split(" | ")
+    end
+
+    # How element names are written: 0 as they are, 1 in the document's
+    # default namespace (`xmlns:name`), 2 in any namespace (`*:name`, an
+    # HTML5 document, where SVG and MathML elements have one).
+    def self.mode(node, ns)
+      return 2 if node.__ref.__html5?
+      ns.key?("xmlns") ? 1 : 0
     end
 
     # The whole selector list as one XPath union: libxml2 sorts a union into
     # document order, which is what the gem answers for a comma list. In a
-    # document with a default namespace (`default_ns`), an element name
+    # document with a default namespace (`mode`), an element name
     # with no namespace of its own is in it, as the gem writes: `xmlns:`.
     # A selector that starts with a combinator is relative to the node
     # itself, so it takes no context.
-    def self.translate(selector, contexts, default_ns)
+    def self.translate(selector, contexts, mode)
       parts = []
       split_list(selector).each do |sel|
-        body = one(sel.strip, default_ns)
+        body = one(sel.strip, mode)
         if body.start_with?("./")
           parts << body
         else
@@ -1647,7 +1682,7 @@ module Nokogiri
     end
 
     # One complex selector: compounds joined by combinators.
-    def self.one(sel, default_ns)
+    def self.one(sel, mode)
       raise SyntaxError, "nokogiri (spinel): empty CSS selector" if sel.empty?
       out = +""
       cur = +""
@@ -1669,7 +1704,7 @@ module Nokogiri
           cur << ch
         elsif depth == 0 && (ch == " " || ch == ">" || ch == "+" || ch == "~")
           unless cur.empty?
-            out << compound(cur, default_ns)
+            out << compound(cur, mode)
             cur = +""
           end
           if ch != " "
@@ -1687,12 +1722,12 @@ module Nokogiri
         end
       end
       raise SyntaxError, "nokogiri (spinel): CSS selector ends in a combinator: #{sel}" unless comb == "" || comb == " "
-      out << compound(cur, default_ns) unless cur.empty?
+      out << compound(cur, mode) unless cur.empty?
       out
     end
 
-    def self.compound(c, default_ns)
-      parts = compound_parts(c, default_ns)
+    def self.compound(c, mode)
+      parts = compound_parts(c, mode)
       tag = parts[0].empty? ? "*" : parts[0]
       parts[1].empty? ? tag : tag + "[" + parts[1] + "]"
     end
@@ -1701,14 +1736,14 @@ module Nokogiri
     # conditions, joined as the gem joins them: " and ", except that an
     # of-type pseudo-class opens a bracket of its own ("]["), so its
     # position counts the elements the conditions before it left.
-    def self.compound_parts(c, default_ns)
+    def self.compound_parts(c, mode)
       i = 0
       tag = +""
       while i < c.length && c[i] != "#" && c[i] != "." && c[i] != "[" && c[i] != ":"
         tag << c[i]
         i += 1
       end
-      tag = element_name(tag, default_ns, c) unless tag.empty?
+      tag = element_name(tag, mode, c) unless tag.empty?
       preds = +""
       while i < c.length
         ch = c[i]
@@ -1733,7 +1768,7 @@ module Nokogiri
           raise SyntaxError, "nokogiri (spinel): unsupported CSS selector: #{c}" if name.empty?
           if j < c.length && c[j] == "("
             k = closing(c, j, "(", ")")
-            pred = function(name, c[(j + 1)...k].strip, default_ns)
+            pred = function(name, c[(j + 1)...k].strip, mode)
             i = k + 1
           else
             pred = pseudo_class(name)
@@ -1750,7 +1785,7 @@ module Nokogiri
       [tag, preds]
     end
 
-    def self.element_name(tag, default_ns, c)
+    def self.element_name(tag, mode, c)
       bar = tag.index("|")
       prefix = bar.nil? ? nil : tag[0...bar]
       local = bar.nil? ? tag : tag[(bar + 1)..]
@@ -1760,7 +1795,8 @@ module Nokogiri
       end
       return local if !prefix.nil? && prefix.empty?
       return prefix + ":" + local unless prefix.nil?
-      return "xmlns:" + local if default_ns && local != "*"
+      return "*:" + local if mode == 2 && local != "*"
+      return "xmlns:" + local if mode == 1 && local != "*"
       local
     end
 
@@ -1820,13 +1856,13 @@ module Nokogiri
       nil
     end
 
-    def self.function(name, arg, default_ns)
+    def self.function(name, arg, mode)
       int = arg.match?(/\A-?\d+\z/)
       if name == "not"
-        negation(arg, default_ns)
+        negation(arg, mode)
       elsif name == "has"
         raise SyntaxError, "nokogiri (spinel): unsupported :has() with a selector list: #{arg}" if split_list(arg).length > 1
-        body = one(arg, default_ns)
+        body = one(arg, mode)
         body.start_with?("./") ? body : ".//" + body
       elsif name == "eq"
         "position()=#{arg}"
@@ -1856,11 +1892,11 @@ module Nokogiri
     # :not(simple): the gem's `not(self::name)` for an element name, else
     # not(conditions). An element name WITH conditions the gem's parser
     # reduces to the name alone; rather than drop them, raise.
-    def self.negation(arg, default_ns)
+    def self.negation(arg, mode)
       if arg.empty? || split_list(arg).length > 1 || combinator?(arg)
         raise SyntaxError, "nokogiri (spinel): unsupported :not(#{arg})"
       end
-      parts = compound_parts(arg, default_ns)
+      parts = compound_parts(arg, mode)
       if parts[1].empty?
         "not(self::#{parts[0].empty? ? "*" : parts[0]})"
       elsif parts[0].empty?
@@ -2018,4 +2054,157 @@ module Nokogiri
   end
 
   HTML = HTML4
+
+  # The gem's Nokogiri::HTML5(string, url, encoding, max_attributes:,
+  # max_errors:, max_tree_depth:, parse_noscript_content_as_text:).
+  def self.HTML5(html, url = nil, encoding = nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                 max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                 parse_noscript_content_as_text: false)
+    HTML5::Document.parse(html, url, encoding, max_attributes: max_attributes, max_errors: max_errors,
+                          max_tree_depth: max_tree_depth, parse_noscript_content_as_text: parse_noscript_content_as_text)
+  end
+
+  module Gumbo
+    DEFAULT_MAX_ATTRIBUTES = 400
+    DEFAULT_MAX_ERRORS = 0
+    DEFAULT_MAX_TREE_DEPTH = 400
+  end
+
+  # HTML5, parsed by gumbo (the parser Nokogiri vendors, which began as
+  # nokogumbo) into the same libxml2 tree everything else here works on,
+  # and serialized by the HTML standard's rules.
+  module HTML5
+    module QuirksMode
+      NO_QUIRKS = 0
+      QUIRKS = 1
+      LIMITED_QUIRKS = 2
+    end
+
+    def self.parse(html, url = nil, encoding = nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                   max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                   parse_noscript_content_as_text: false)
+      Document.parse(html, url, encoding, max_attributes: max_attributes, max_errors: max_errors,
+                     max_tree_depth: max_tree_depth, parse_noscript_content_as_text: parse_noscript_content_as_text)
+    end
+
+    def self.fragment(tags, encoding = nil, context: nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                      max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                      parse_noscript_content_as_text: false)
+      DocumentFragment.parse(tags, encoding, context: context, max_attributes: max_attributes,
+                             max_errors: max_errors, max_tree_depth: max_tree_depth,
+                             parse_noscript_content_as_text: parse_noscript_content_as_text)
+    end
+
+    class Document < HTML4::Document
+      # The gem's HTML5::Document.parse: a String (UTF-8), gumbo's limits
+      # as keywords. A limit gumbo hits raises ArgumentError, as in the
+      # gem; the errors are kept only up to max_errors (none by default).
+      def self.parse(html, url = nil, encoding = nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                     max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                     parse_noscript_content_as_text: false)
+        ref = NokoNodeRef.new.__parse_html5(html.to_s, max_attributes, max_errors, max_tree_depth,
+                                            parse_noscript_content_as_text)
+        raise ArgumentError, NokogiriExt.sp_noko_gumbo_status unless ref.__present?
+        Document.new(ref)
+      end
+
+      def quirks_mode
+        q = @ref.__quirks_mode
+        q < 0 ? nil : q
+      end
+
+      # The gem's: an HTML5 fragment with no context.
+      def fragment(tags = nil)
+        DocumentFragment.new(self, tags)
+      end
+    end
+
+    # The gem's HTML5 fragment: gumbo's fragment parse, in the context of a
+    # tag name ("tr", "svg", "math:mi"; "body" by default) or of a node,
+    # its errors its own.
+    class DocumentFragment < HTML4::DocumentFragment
+      def self.parse(tags, encoding = nil, context: nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                     max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                     parse_noscript_content_as_text: false)
+        doc = Document.new(NokoNodeRef.new.__new_html5_document)
+        DocumentFragment.new(doc, tags, context, max_attributes: max_attributes, max_errors: max_errors,
+                             max_tree_depth: max_tree_depth,
+                             parse_noscript_content_as_text: parse_noscript_content_as_text)
+      end
+
+      def initialize(document, tags = nil, context = nil, max_attributes: Gumbo::DEFAULT_MAX_ATTRIBUTES,
+                     max_errors: Gumbo::DEFAULT_MAX_ERRORS, max_tree_depth: Gumbo::DEFAULT_MAX_TREE_DEPTH,
+                     parse_noscript_content_as_text: false)
+        @doc = document
+        @frag = XML::Node.new(document.__ref.__create_fragment)
+        @errors = []
+        return if tags.nil?
+        ctx_tag = "body"
+        ctx_ns = 0
+        form = false
+        encoding = ""
+        is_node = false
+        if context.is_a?(String)
+          ctx_tag = context
+          colon = ctx_tag.index(":")
+          if colon.nil?
+            ctx_ns = 1 if ctx_tag.downcase == "svg"
+            ctx_ns = 2 if ctx_tag.downcase == "math"
+          else
+            prefix = ctx_tag[0...colon].downcase
+            if prefix == "svg"
+              ctx_ns = 1
+            elsif prefix == "math"
+              ctx_ns = 2
+            elsif prefix != "html"
+              raise ArgumentError, "Invalid context namespace '#{ctx_tag[0...colon]}'"
+            end
+            ctx_tag = ctx_tag[(colon + 1)..]
+          end
+          form = ctx_ns == 0 && ctx_tag.downcase == "form"
+        elsif !context.nil?
+          is_node = true
+          ctx_tag = context.name
+          ctx_ns = DocumentFragment.namespace_of(context, true)
+          node = context
+          while node
+            if node.element? && node.name.downcase == "form" && DocumentFragment.namespace_of(node, false) == 0
+              form = true
+              break
+            end
+            node = node.parent
+          end
+          if ctx_ns == 2 && ctx_tag.downcase == "annotation-xml"
+            encoding = context["encoding"].to_s
+          end
+        end
+        r = @frag.__ref.__html5_fragment(tags.to_s, ctx_tag, ctx_ns, form, encoding, is_node,
+                                         max_attributes, max_errors, max_tree_depth,
+                                         parse_noscript_content_as_text)
+        raise ArgumentError, NokogiriExt.sp_noko_gumbo_status if r < 0
+        i = 0
+        n = NokogiriExt.sp_noko_parse_error_count
+        while i < n
+          @errors << XML::SyntaxError.build(NokogiriExt.sp_noko_parse_error_message(i),
+                                            NokogiriExt.sp_noko_parse_error_level(i),
+                                            NokogiriExt.sp_noko_parse_error_line(i),
+                                            NokogiriExt.sp_noko_parse_error_column(i))
+          i += 1
+        end
+      end
+
+      # gumbo's namespace for a node: HTML (0), SVG (1), MathML (2); with
+      # `known`, anything else raises, as the gem's lookup_namespace does.
+      def self.namespace_of(node, known)
+        ns = node.namespace
+        return 0 if ns.nil?
+        href = ns.href
+        return 0 if href == "http://www.w3.org/1999/xhtml"
+        return 2 if href == "http://www.w3.org/1998/Math/MathML"
+        return 1 if href == "http://www.w3.org/2000/svg"
+        raise ArgumentError, "Unexpected namespace URI \"#{href}\"" if known
+        -1
+      end
+    end
+  end
 end

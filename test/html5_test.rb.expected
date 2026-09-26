@@ -1,0 +1,44 @@
+Nokogiri::HTML5::Document
+0
+"UTF-8"
+true
+"<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>T &amp; U</title>\n<script>if (a < b && c > d) { x = \"</p>\" }</script></head>\n<body>\n<p class=\"x\">one&nbsp;two <br> three <img src=\"/i.png\" alt=\"say &quot;hi&quot;\">\n<svg viewBox=\"0 0 10 10\"><circle r=\"4\"></circle><foreignObject><p>in svg</p></foreignObject></svg>\n<math><mi>x</mi></math>\n</p>foster<table><tbody><tr><td>a</td></tr></tbody></table>\n<b><i>bold italic</i></b><i> italic</i>\n<textarea>kept</textarea>\n<template><li>t</li></template>\n\n</body></html>"
+"\n<p class=\"x\">one&nbsp;two <br> three <img src=\"/i.png\" alt=\"say &quot;hi&quot;\">\n<svg viewBox=\"0 0 10 10\"><circle r=\"4\"></circle><foreignObject><p>in svg</p></foreignObject></svg>\n<math><mi>x</mi></math>\n</p>foster<table><tbody><tr><td>a</td></tr></tbody></table>\n<b><i>bold italic</i></b><i> italic</i>\n<textarea>kept</textarea>\n<template><li>t</li></template>\n\n"
+"<p class=\"x\">one&nbsp;two <br> three <img src=\"/i.png\" alt=\"say &quot;hi&quot;\">\n<svg viewBox=\"0 0 10 10\"><circle r=\"4\"></circle><foreignObject><p>in svg</p></foreignObject></svg>\n<math><mi>x</mi></math>\n</p>"
+"T & U"
+"if (a < b && c > d) { x = \"</p>\" }"
+1
+"http://www.w3.org/2000/svg"
+"svg"
+"0 0 10 10"
+["in svg"]
+"http://www.w3.org/1998/Math/MathML"
+["p", "table", "b", "i", "textarea", "template"]
+"<table><tbody><tr><td>a</td></tr></tbody></table>"
+["text", "br", "text", "img", "text", "svg", "text", "math", "text"]
+Nokogiri::HTML5::Document
+"utf-8"
+0
+[1, "<html><head></head><body><p>no doctype</p></body></html>"]
+[0, "<!DOCTYPE html><html><head></head><body><p>x</p></body></html>"]
+[1, "<!DOCTYPE html><html><head></head><body><p>x</p></body></html>"]
+[1, "<html><head></head><body></body></html>"]
+3
+[[1, 1, 2], [1, 5, 2], [1, 18, 2]]
+"1:1: ERROR: Expected a doctype token\n<p>x</b><div><p>y\n^"
+0
+["depth", "Document tree depth limit exceeded"]
+["attrs", "Attributes per element limit exceeded"]
+[2, "cell<p>para</p>"]
+"<td>cell</td>"
+["<circle r=\"1\"></circle>", "http://www.w3.org/2000/svg"]
+["<b>x</b>", 2]
+"a &amp; b <!-- c -->"
+"<li>one</li>"
+"<table><tbody><tr><td>a</td><td>b</td><td>c</td></tr></tbody></table>"
+"<p class=\"x\"><em>new</em> &amp; <svg><rect></rect></svg></p>"
+1
+"<strong>s</strong> &amp; <svg><rect></rect></svg>"
+["strong", "td"]
+"<textarea>kept</textarea>"
+"<template><li>t</li></template>"

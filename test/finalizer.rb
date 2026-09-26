@@ -60,6 +60,18 @@ keeper = Nokogiri::HTML("<div id=\"k\"></div>")
   bytes += doc.to_html.length
 end
 bytes += keeper.at_css("#k").children.length
+
+# HTML5 documents and fragments (gumbo's output rebuilt as libxml2 trees),
+# with errors collected, markup edited in context, and a fragment's nodes
+# carried into a document.
+3000.times do |i|
+  doc = Nokogiri::HTML5("<p>a <b>b<i>c</b> d<svg><rect/></svg><table><td>#{i}</table>", max_errors: 10)
+  made += 1
+  doc.at_css("td").add_child("<em>e</em>")
+  frag = Nokogiri::HTML5.fragment("<li>#{i}</li>x", context: "ul")
+  doc.at_css("p").add_child(frag.children.first) if i.even?
+  bytes += doc.to_html.length + doc.errors.length + frag.to_html.length
+end
 puts "kept detached: #{kept.length}"
 kept = []
 GC.start

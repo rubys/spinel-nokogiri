@@ -35,6 +35,8 @@
 
 #include "spinel/runtime.h" /* sp_gc_alloc, sp_int, sp_bool, sp_RbVal */
 
+#include "gumbo/nokogiri_gumbo.h"
+
 /* ---- owners ------------------------------------------------------------ */
 
 /* A parse's errors, as Nokogiri collects them: every structured error
@@ -59,6 +61,10 @@ typedef struct sp_nk_owner {
 	   Nokogiri keeps them alive with the document, since a node's ns may
 	   still name one, and so does this. */
 	xmlNsPtr removed_ns;
+	/* An HTML5 document (parsed by gumbo, serialized by the HTML5
+	   rules) and its quirks mode; -1 when it is not one. */
+	int html5;
+	int quirks_mode;
 } sp_nk_owner;
 
 static pthread_mutex_t sp_nk_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -215,6 +221,7 @@ static sp_NokoNode *sp_nk_own(sp_int cls_id, xmlDocPtr doc)
 	sp_nk_owner *o = (sp_nk_owner *)calloc(1, sizeof(sp_nk_owner));
 	o->doc = doc;
 	o->errs = sp_nk_parse_errs;
+	o->quirks_mode = -1;
 	sp_nk_parse_errs.v = NULL;
 	sp_nk_parse_errs.n = sp_nk_parse_errs.cap = 0;
 	__atomic_add_fetch(&sp_nk_live_docs, 1, __ATOMIC_RELAXED);
@@ -933,4 +940,505 @@ sp_int sp_NokoNode_line(sp_NokoNode *self)
 sp_bool sp_NokoNode_blank_p(sp_NokoNode *self)
 {
 	return xmlIsBlankNode(self->node) == 1;
+}
+
+/* ---- HTML5 (gumbo) ----------------------------------------------------- */
+
+/* Ported from Nokogiri's ext/nokogiri/gumbo.c (1.19.4):
+ *
+ *   Copyright 2013-2021 Sam Ruby, Stephen Checkoway
+ *
+ *   Licensed under the Apache License, Version 2.0 (the "License"); you may
+ *   not use this file except in compliance with the License. You may obtain
+ *   a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *   (and gumbo/LICENSE). Unless required by applicable law or agreed to in
+ *   writing, software distributed under the License is distributed on an
+ *   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ *   express or implied.
+ *
+ * Nokogiri's gumbo.c, off the Ruby C API: gumbo parses, and its tree is
+   rebuilt as a libxml2 tree -- elements in the SVG and MathML namespaces
+   under the prefixes Nokogiri gives them -- so everything else (XPath,
+   editing) is the libxml2 code the rest of the package already uses. */
+
+static xmlNsPtr sp_nk_ns_for(xmlDocPtr doc, xmlNodePtr root, const char *href, const char *prefix)
+{
+	xmlNsPtr ns = xmlSearchNs(doc, root, (const xmlChar *)prefix);
+	if (ns)
+		return ns;
+	return xmlNewNs(root, (const xmlChar *)href, (const xmlChar *)prefix);
+}
+
+static void sp_nk_set_line(xmlNodePtr node, size_t line)
+{
+	if (line < 65535)
+		node->line = (unsigned short)line;
+}
+
+/* gumbo.c's build_tree, verbatim in effect. */
+static void sp_nk_build_tree(xmlDocPtr doc, xmlNodePtr xml_output_node, const GumboNode *gumbo_node)
+{
+	xmlNodePtr xml_root = NULL;
+	xmlNodePtr xml_node = xml_output_node;
+	size_t child_index = 0;
+
+	while (1) {
+		const GumboVector *children = gumbo_node->type == GUMBO_NODE_DOCUMENT ?
+		    &gumbo_node->v.document.children : &gumbo_node->v.element.children;
+		const GumboNode *gumbo_child;
+		xmlNodePtr xml_child;
+		if (child_index >= children->length) {
+			if (xml_node == xml_output_node)
+				return;
+			child_index = gumbo_node->index_within_parent + 1;
+			gumbo_node = gumbo_node->parent;
+			xml_node = xml_node->parent;
+			if (xml_node == xml_output_node)
+				xml_root = NULL;
+			continue;
+		}
+		gumbo_child = children->data[child_index++];
+		switch (gumbo_child->type) {
+		case GUMBO_NODE_DOCUMENT:
+			abort();
+		case GUMBO_NODE_TEXT:
+		case GUMBO_NODE_WHITESPACE:
+			xml_child = xmlNewDocText(doc, (const xmlChar *)gumbo_child->v.text.text);
+			sp_nk_set_line(xml_child, gumbo_child->v.text.start_pos.line);
+			xmlAddChild(xml_node, xml_child);
+			break;
+		case GUMBO_NODE_CDATA:
+			xml_child = xmlNewCDataBlock(doc, (const xmlChar *)gumbo_child->v.text.text,
+			                             (int)strlen(gumbo_child->v.text.text));
+			sp_nk_set_line(xml_child, gumbo_child->v.text.start_pos.line);
+			xmlAddChild(xml_node, xml_child);
+			break;
+		case GUMBO_NODE_COMMENT:
+			xml_child = xmlNewDocComment(doc, (const xmlChar *)gumbo_child->v.text.text);
+			sp_nk_set_line(xml_child, gumbo_child->v.text.start_pos.line);
+			xmlAddChild(xml_node, xml_child);
+			break;
+		case GUMBO_NODE_TEMPLATE:
+		case GUMBO_NODE_ELEMENT: {
+			xmlNsPtr ns = NULL;
+			const GumboVector *attrs;
+			size_t i;
+			xml_child = xmlNewDocNode(doc, NULL, (const xmlChar *)gumbo_child->v.element.name, NULL);
+			sp_nk_set_line(xml_child, gumbo_child->v.element.start_pos.line);
+			if (xml_root == NULL)
+				xml_root = xml_child;
+			switch (gumbo_child->v.element.tag_namespace) {
+			case GUMBO_NAMESPACE_HTML:
+				break;
+			case GUMBO_NAMESPACE_SVG:
+				ns = sp_nk_ns_for(doc, xml_root, "http://www.w3.org/2000/svg", "svg");
+				break;
+			case GUMBO_NAMESPACE_MATHML:
+				ns = sp_nk_ns_for(doc, xml_root, "http://www.w3.org/1998/Math/MathML", "math");
+				break;
+			}
+			if (ns != NULL)
+				xmlSetNs(xml_child, ns);
+			xmlAddChild(xml_node, xml_child);
+			attrs = &gumbo_child->v.element.attributes;
+			for (i = 0; i < attrs->length; i++) {
+				const GumboAttribute *attr = attrs->data[i];
+				switch (attr->attr_namespace) {
+				case GUMBO_ATTR_NAMESPACE_XLINK:
+					ns = sp_nk_ns_for(doc, xml_root, "http://www.w3.org/1999/xlink", "xlink");
+					break;
+				case GUMBO_ATTR_NAMESPACE_XML:
+					ns = sp_nk_ns_for(doc, xml_root, "http://www.w3.org/XML/1998/namespace", "xml");
+					break;
+				case GUMBO_ATTR_NAMESPACE_XMLNS:
+					ns = sp_nk_ns_for(doc, xml_root, "http://www.w3.org/2000/xmlns/", "xmlns");
+					break;
+				default:
+					ns = NULL;
+				}
+				xmlNewNsProp(xml_child, ns, (const xmlChar *)attr->name, (const xmlChar *)attr->value);
+			}
+			child_index = 0;
+			gumbo_node = gumbo_child;
+			xml_node = xml_child;
+		}
+		}
+	}
+}
+
+/* gumbo.c's add_errors: each error as a SyntaxError at level 2 (ERROR),
+   its message gumbo's caret diagnostic. Collected where a parse's errors
+   go (sp_nk_parse_errs). */
+static void sp_nk_gumbo_errors(const GumboOutput *output, const char *input, size_t len)
+{
+	size_t i;
+	sp_nk_errs *e = &sp_nk_parse_errs;
+	for (i = 0; i < output->errors.length; i++) {
+		GumboError *err = output->errors.data[i];
+		GumboSourcePosition pos = gumbo_error_position(err);
+		char *msg = NULL;
+		size_t size = gumbo_caret_diagnostic_to_string(err, input, len, &msg);
+		if (e->n == e->cap) {
+			e->cap = e->cap ? e->cap * 2 : 8;
+			e->v = (sp_nk_err *)realloc(e->v, e->cap * sizeof(sp_nk_err));
+		}
+		e->v[e->n].level = 2;
+		e->v[e->n].line = (int)pos.line;
+		e->v[e->n].column = (int)pos.column;
+		e->v[e->n].message = (char *)malloc(size + 1);
+		memcpy(e->v[e->n].message, msg, size);
+		e->v[e->n].message[size] = '\0';
+		free(msg);
+		e->n++;
+	}
+}
+
+/* gumbo's refusal of a parse (too many attributes, too deep), for the
+   ArgumentError the gem raises; "" when the parse went through. */
+static SP_TLS const char *sp_nk_gumbo_status = "";
+
+const char *sp_noko_gumbo_status(void)
+{
+	return sp_nk_gumbo_status;
+}
+
+static GumboOptions sp_nk_gumbo_options(sp_int max_attributes, sp_int max_errors, sp_int max_depth, sp_bool noscript_text)
+{
+	GumboOptions options = kGumboDefaultOptions;
+	options.max_attributes = (int)max_attributes;
+	options.max_errors = (int)max_errors;
+	options.max_tree_depth = max_depth < 0 ? UINT_MAX : (unsigned int)max_depth;
+	options.parse_noscript_content_as_text = noscript_text;
+	return options;
+}
+
+static GumboOutput *sp_nk_gumbo_parse(const GumboOptions *options, const char *input)
+{
+	GumboOutput *output = gumbo_parse_with_options(options, input, strlen(input));
+	sp_nk_gumbo_status = "";
+	if (output->status != GUMBO_STATUS_OK) {
+		sp_nk_gumbo_status = gumbo_status_to_string(output->status);
+		gumbo_destroy_output(output);
+		return NULL;
+	}
+	return output;
+}
+
+/* Nokogiri::HTML5::Document.parse: the document gumbo's doctype names
+   (or none), built, its encoding UTF-8 as the gem sets it. An empty handle
+   when gumbo refuses (sp_noko_gumbo_status says why). */
+sp_NokoNode *sp_NokoNode_parse_html5(sp_NokoNode *self, const char *html, sp_int max_attributes,
+                                    sp_int max_errors, sp_int max_depth, sp_bool noscript_text)
+{
+	GumboOptions options = sp_nk_gumbo_options(max_attributes, max_errors, max_depth, noscript_text);
+	GumboOutput *output;
+	htmlDocPtr doc;
+	sp_NokoNode *h;
+	sp_nk_begin_parse();
+	xmlSetStructuredErrorFunc(NULL, NULL);
+	output = sp_nk_gumbo_parse(&options, html);
+	if (!output)
+		return sp_NokoNode_new(self->cls_id);
+	doc = htmlNewDocNoDtD(NULL, NULL);
+	if (output->document->v.document.has_doctype) {
+		const char *pub = output->document->v.document.public_identifier;
+		const char *sys = output->document->v.document.system_identifier;
+		xmlCreateIntSubset(doc, (const xmlChar *)output->document->v.document.name,
+		                   pub[0] ? (const xmlChar *)pub : NULL, sys[0] ? (const xmlChar *)sys : NULL);
+	}
+	sp_nk_build_tree(doc, (xmlNodePtr)doc, output->document);
+	doc->encoding = xmlStrdup((const xmlChar *)"UTF-8");
+	sp_nk_gumbo_errors(output, html, strlen(html));
+	h = sp_nk_own(self->cls_id, doc);
+	h->owner->html5 = 1;
+	h->owner->quirks_mode = (int)output->document->v.document.doc_type_quirks_mode;
+	gumbo_destroy_output(output);
+	return h;
+}
+
+/* HTML5::Document.new, which HTML5.fragment parses into: htmlNewDoc, as
+   the gem's HTML4::Document.new makes one (with its default DTD). */
+sp_NokoNode *sp_NokoNode_new_html5_document(sp_NokoNode *self)
+{
+	sp_NokoNode *h;
+	htmlDocPtr doc = htmlNewDoc(NULL, NULL);
+	doc->encoding = xmlStrdup((const xmlChar *)"UTF-8");
+	sp_nk_begin_parse();
+	xmlSetStructuredErrorFunc(NULL, NULL);
+	h = sp_nk_own(self->cls_id, doc);
+	h->owner->html5 = 1;
+	return h;
+}
+
+sp_bool sp_NokoNode_html5_p(sp_NokoNode *self)
+{
+	return self->owner && self->owner->html5;
+}
+
+sp_int sp_NokoNode_quirks_mode(sp_NokoNode *self)
+{
+	return self->owner->quirks_mode;
+}
+
+/* gumbo.c's fragment parse into `self`, a fragment node. The context --
+   its tag, namespace, a form ancestor, an annotation-xml encoding -- the
+   Ruby side works out; the quirks mode comes from the document when the
+   context is a node of a parsed HTML5 document, as in the gem. The
+   fragment's errors are left in sp_nk_parse_errs for the Ruby side.
+   Answers 0, or -1 when gumbo refuses. */
+sp_int sp_NokoNode_html5_fragment(sp_NokoNode *self, const char *tags, const char *ctx_tag, sp_int ctx_ns,
+                                  sp_bool form, const char *encoding, sp_bool ctx_is_node,
+                                  sp_int max_attributes, sp_int max_errors, sp_int max_depth,
+                                  sp_bool noscript_text)
+{
+	GumboOptions options = sp_nk_gumbo_options(max_attributes, max_errors, max_depth, noscript_text);
+	GumboOutput *output;
+	GumboQuirksModeEnum quirks;
+	xmlDocPtr doc = self->owner->doc;
+	xmlDtdPtr dtd = xmlGetIntSubset(doc);
+
+	if (!ctx_is_node || self->owner->quirks_mode < 0)
+		quirks = GUMBO_DOCTYPE_NO_QUIRKS;
+	else if (dtd == NULL)
+		quirks = GUMBO_DOCTYPE_QUIRKS;
+	else
+		quirks = gumbo_compute_quirks_mode((const char *)dtd->name, (const char *)dtd->ExternalID,
+		                                   (const char *)dtd->SystemID);
+	options.fragment_context = ctx_tag;
+	options.fragment_namespace = (GumboNamespaceEnum)ctx_ns;
+	options.fragment_encoding = *encoding ? encoding : NULL;
+	options.quirks_mode = quirks;
+	options.fragment_context_has_form_ancestor = form;
+	if (options.max_tree_depth < UINT_MAX)
+		options.max_tree_depth++;
+
+	sp_nk_begin_parse();
+	xmlSetStructuredErrorFunc(NULL, NULL);
+	output = sp_nk_gumbo_parse(&options, tags);
+	if (!output)
+		return -1;
+	sp_nk_build_tree(doc, self->node, output->root);
+	sp_nk_gumbo_errors(output, tags, strlen(tags));
+	gumbo_destroy_output(output);
+	return 0;
+}
+
+/* The last parse's errors, when no document holds them (a fragment's). */
+sp_int sp_noko_parse_error_count(void)
+{
+	return (sp_int)sp_nk_parse_errs.n;
+}
+
+/* ---- HTML5 serialization (xml_node.c's html_standard_serialize) --------- */
+
+/* Ported from Nokogiri's ext/nokogiri/xml_node.c (1.19.4, MIT). */
+
+static void sp_nk_out_tagname(xmlBufferPtr out, xmlNodePtr elem)
+{
+	const char *name = (const char *)elem->name;
+	xmlNsPtr ns = elem->ns;
+	if (ns && ns->href && ns->prefix
+	    && strcmp((const char *)ns->href, "http://www.w3.org/1999/xhtml")
+	    && strcmp((const char *)ns->href, "http://www.w3.org/1998/Math/MathML")
+	    && strcmp((const char *)ns->href, "http://www.w3.org/2000/svg")) {
+		const char *colon;
+		xmlBufferCat(out, ns->prefix);
+		xmlBufferCCat(out, ":");
+		colon = strchr(name, ':');
+		if (colon)
+			name = colon + 1;
+	}
+	xmlBufferCCat(out, name);
+}
+
+static void sp_nk_out_attr_name(xmlBufferPtr out, xmlAttrPtr attr)
+{
+	xmlNsPtr ns = attr->ns;
+	const char *name = (const char *)attr->name;
+	if (ns && ns->href) {
+		const char *uri = (const char *)ns->href;
+		const char *localname = strchr(name, ':');
+		localname = localname ? localname + 1 : name;
+		if (!strcmp(uri, "http://www.w3.org/XML/1998/namespace")) {
+			xmlBufferCCat(out, "xml:");
+			name = localname;
+		} else if (!strcmp(uri, "http://www.w3.org/2000/xmlns/")) {
+			if (strcmp(localname, "xmlns"))
+				xmlBufferCCat(out, "xmlns:");
+			name = localname;
+		} else if (!strcmp(uri, "http://www.w3.org/1999/xlink")) {
+			xmlBufferCCat(out, "xlink:");
+			name = localname;
+		} else if (ns->prefix) {
+			xmlBufferCat(out, ns->prefix);
+			xmlBufferCCat(out, ":");
+			name = localname;
+		}
+	}
+	xmlBufferCCat(out, name);
+}
+
+static void sp_nk_out_escaped(xmlBufferPtr out, const xmlChar *start, int attr)
+{
+	const xmlChar *next = start;
+	int ch;
+	while ((ch = *next) != 0) {
+		const char *replacement = NULL;
+		size_t replaced = 1;
+		if (ch == '&')
+			replacement = "&amp;";
+		else if (ch == 0xC2 && next[1] == 0xA0) {
+			replacement = "&nbsp;";
+			replaced = 2;
+		} else if (attr && ch == '"')
+			replacement = "&quot;";
+		else if (!attr && ch == '<')
+			replacement = "&lt;";
+		else if (!attr && ch == '>')
+			replacement = "&gt;";
+		else {
+			++next;
+			continue;
+		}
+		if (next > start)
+			xmlBufferAdd(out, start, (int)(next - start));
+		xmlBufferCCat(out, replacement);
+		next += replaced;
+		start = next;
+	}
+	if (next > start)
+		xmlBufferAdd(out, start, (int)(next - start));
+}
+
+static int sp_nk_prepend_newline(xmlNodePtr node)
+{
+	const char *name = (const char *)node->name;
+	xmlNodePtr child = node->children;
+	if (!name || !child || (strcmp(name, "pre") && strcmp(name, "textarea") && strcmp(name, "listing")))
+		return 0;
+	return child->type == XML_TEXT_NODE && child->content && child->content[0] == '\n';
+}
+
+static int sp_nk_is_one_of(xmlNodePtr node, const char *const *names, size_t n)
+{
+	const char *name = (const char *)node->name;
+	size_t i;
+	if (name == NULL || node->ns != NULL)
+		return 0;
+	for (i = 0; i < n; i++)
+		if (!strcmp(name, names[i]))
+			return 1;
+	return 0;
+}
+
+static void sp_nk_out_node(xmlBufferPtr out, xmlNodePtr node, int preserve_newline)
+{
+	static const char *const VOID_ELEMENTS[] = {
+		"area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr",
+		"img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr",
+	};
+	static const char *const UNESCAPED_TEXT_ELEMENTS[] = {
+		"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript",
+	};
+	xmlNodePtr child;
+	switch (node->type) {
+	case XML_ELEMENT_NODE: {
+		xmlAttrPtr attr;
+		xmlBufferCCat(out, "<");
+		sp_nk_out_tagname(out, node);
+		for (attr = node->properties; attr; attr = attr->next) {
+			xmlBufferCCat(out, " ");
+			sp_nk_out_node(out, (xmlNodePtr)attr, preserve_newline);
+		}
+		xmlBufferCCat(out, ">");
+		if (!sp_nk_is_one_of(node, VOID_ELEMENTS, sizeof VOID_ELEMENTS / sizeof VOID_ELEMENTS[0])) {
+			if (preserve_newline && sp_nk_prepend_newline(node))
+				xmlBufferCCat(out, "\n");
+			for (child = node->children; child; child = child->next)
+				sp_nk_out_node(out, child, preserve_newline);
+			xmlBufferCCat(out, "</");
+			sp_nk_out_tagname(out, node);
+			xmlBufferCCat(out, ">");
+		}
+		break;
+	}
+	case XML_ATTRIBUTE_NODE: {
+		xmlAttrPtr attr = (xmlAttrPtr)node;
+		sp_nk_out_attr_name(out, attr);
+		if (attr->children) {
+			xmlChar *value = xmlNodeListGetString(attr->doc, attr->children, 1);
+			xmlBufferCCat(out, "=\"");
+			sp_nk_out_escaped(out, value, 1);
+			xmlFree(value);
+			xmlBufferCCat(out, "\"");
+		} else {
+			xmlBufferCCat(out, "=\"\"");
+		}
+		break;
+	}
+	case XML_TEXT_NODE:
+		if (node->parent && sp_nk_is_one_of(node->parent, UNESCAPED_TEXT_ELEMENTS,
+		                                    sizeof UNESCAPED_TEXT_ELEMENTS / sizeof UNESCAPED_TEXT_ELEMENTS[0]))
+			xmlBufferCat(out, node->content);
+		else
+			sp_nk_out_escaped(out, node->content, 0);
+		break;
+	case XML_CDATA_SECTION_NODE:
+		xmlBufferCCat(out, "<![CDATA[");
+		xmlBufferCat(out, node->content);
+		xmlBufferCCat(out, "]]>");
+		break;
+	case XML_COMMENT_NODE:
+		xmlBufferCCat(out, "<!--");
+		xmlBufferCat(out, node->content);
+		xmlBufferCCat(out, "-->");
+		break;
+	case XML_PI_NODE:
+		xmlBufferCCat(out, "<?");
+		xmlBufferCat(out, node->content);
+		xmlBufferCCat(out, ">");
+		break;
+	case XML_DOCUMENT_TYPE_NODE:
+	case XML_DTD_NODE:
+		xmlBufferCCat(out, "<!DOCTYPE ");
+		xmlBufferCat(out, node->name);
+		xmlBufferCCat(out, ">");
+		break;
+	case XML_DOCUMENT_NODE:
+	case XML_DOCUMENT_FRAG_NODE:
+	case XML_HTML_DOCUMENT_NODE:
+		for (child = node->children; child; child = child->next)
+			sp_nk_out_node(out, child, preserve_newline);
+		break;
+	default:
+		break;
+	}
+}
+
+/* Node#to_html in an HTML5 document: the HTML standard's serialization. */
+sp_int sp_NokoNode_html5_serialize(sp_NokoNode *self, sp_bool preserve_newline)
+{
+	xmlBufferPtr buf = xmlBufferCreate();
+	sp_nk_out_node(buf, self->node, preserve_newline);
+	return sp_nk_out_buffer(buf);
+}
+
+sp_int sp_noko_parse_error_level(sp_int i)
+{
+	return sp_nk_parse_errs.v[i].level;
+}
+
+sp_int sp_noko_parse_error_line(sp_int i)
+{
+	return sp_nk_parse_errs.v[i].line;
+}
+
+sp_int sp_noko_parse_error_column(sp_int i)
+{
+	return sp_nk_parse_errs.v[i].column;
+}
+
+const char *sp_noko_parse_error_message(sp_int i)
+{
+	return sp_nk_parse_errs.v[i].message;
 }
