@@ -713,8 +713,12 @@ sp_NokoNode *sp_NokoNode_in_context_result(sp_NokoNode *self, sp_int i)
 
 /* ---- XPath ------------------------------------------------------------- */
 
-/* The last query's results, per thread, read out one by one. */
-static SP_TLS xmlXPathObjectPtr sp_nk_xp = NULL;
+/* The last query's result nodes, per thread, read out one by one. Only
+   the pointers are kept: the XPath object is freed before the query
+   returns, because freeing it later walks its node set, and by then the
+   GC may have freed the document those nodes were in. */
+static SP_TLS xmlNodePtr *sp_nk_xp = NULL;
+static SP_TLS size_t sp_nk_xp_n = 0;
 
 /* Nokogiri installs its own error handler, so libxml2 prints nothing for a
    bad expression (the gem raises XPath::SyntaxError instead, with
@@ -766,10 +770,11 @@ static void sp_nk_register_ns(xmlXPathContextPtr ctx, const char *bindings)
 sp_int sp_NokoNode_xpath(sp_NokoNode *self, const char *expr, const char *bindings)
 {
 	xmlXPathContextPtr ctx;
-	if (sp_nk_xp) {
-		xmlXPathFreeObject(sp_nk_xp);
-		sp_nk_xp = NULL;
-	}
+	xmlXPathObjectPtr res;
+	int i;
+	free(sp_nk_xp);
+	sp_nk_xp = NULL;
+	sp_nk_xp_n = 0;
 	free(sp_nk_xp_err);
 	sp_nk_xp_err = NULL;
 	ctx = xmlXPathNewContext(self->owner->doc);
@@ -781,20 +786,30 @@ sp_int sp_NokoNode_xpath(sp_NokoNode *self, const char *expr, const char *bindin
 	xmlXPathRegisterNs(ctx, (const xmlChar *)"nokogiri",
 	                   (const xmlChar *)"http://www.nokogiri.org/default_ns/ruby/extensions_functions");
 	sp_nk_register_ns(ctx, bindings);
-	sp_nk_xp = xmlXPathEvalExpression((const xmlChar *)expr, ctx);
+	res = xmlXPathEvalExpression((const xmlChar *)expr, ctx);
 	xmlXPathFreeContext(ctx);
-	if (!sp_nk_xp)
+	if (!res)
 		return -1;
-	if (sp_nk_xp->type != XPATH_NODESET)
+	if (res->type != XPATH_NODESET) {
+		xmlXPathFreeObject(res);
 		return -2;
-	return sp_nk_xp->nodesetval ? sp_nk_xp->nodesetval->nodeNr : 0;
+	}
+	if (res->nodesetval && res->nodesetval->nodeNr > 0) {
+		sp_nk_xp = (xmlNodePtr *)malloc((size_t)res->nodesetval->nodeNr * sizeof(xmlNodePtr));
+		for (i = 0; i < res->nodesetval->nodeNr; i++) {
+			xmlNodePtr n = res->nodesetval->nodeTab[i];
+			/* a namespace node is the set's own copy, freed with it */
+			if (n->type != XML_NAMESPACE_DECL)
+				sp_nk_xp[sp_nk_xp_n++] = n;
+		}
+	}
+	xmlXPathFreeObject(res);
+	return (sp_int)sp_nk_xp_n;
 }
 
 sp_NokoNode *sp_NokoNode_xpath_result(sp_NokoNode *self, sp_int i)
 {
-	xmlNodePtr n = NULL;
-	if (sp_nk_xp && sp_nk_xp->nodesetval && i >= 0 && i < sp_nk_xp->nodesetval->nodeNr)
-		n = sp_nk_xp->nodesetval->nodeTab[i];
+	xmlNodePtr n = (i >= 0 && (size_t)i < sp_nk_xp_n) ? sp_nk_xp[i] : NULL;
 	return sp_nk_wrap(self->cls_id, n, self->owner);
 }
 
