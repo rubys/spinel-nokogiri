@@ -68,6 +68,9 @@ module NokogiriNodePackage
   native_method :__namespace_scopes, [], :int,                      "sp_NokoNode_namespace_scopes"
   native_method :__namespace_definitions, [], :int,                 "sp_NokoNode_namespace_definitions"
   native_method :__remove_namespaces, [], :void,                    "sp_NokoNode_remove_namespaces"
+  native_method :__path,             [], :int,                      "sp_NokoNode_path"
+  native_method :__line,             [], :int,                      "sp_NokoNode_line"
+  native_method :__blank?,           [], :bool,                     "sp_NokoNode_blank_p"
 end
 
 module Nokogiri
@@ -373,6 +376,78 @@ module Nokogiri
         NodeSet.new(children.to_a.select { |c| c.element? })
       end
 
+      def elements
+        element_children
+      end
+
+      def first_element_child
+        c = child
+        c = c.next_sibling while c && !c.element?
+        c
+      end
+
+      def last_element_child
+        c = Node.wrap(@ref.__last_child)
+        c = c.previous_sibling while c && !c.element?
+        c
+      end
+
+      def next_element
+        c = next_sibling
+        c = c.next_sibling while c && !c.element?
+        c
+      end
+
+      def previous_element
+        c = previous_sibling
+        c = c.previous_sibling while c && !c.element?
+        c
+      end
+
+      # The gem's: every ancestor up to the document, nearest first; with a
+      # selector, the ones it matches.
+      def ancestors(selector = nil)
+        parents = []
+        p = parent
+        while p
+          parents << p
+          p = p.parent
+        end
+        return NodeSet.new(parents) if selector.nil? || parents.empty?
+        found = parents.last.search(selector)
+        NodeSet.new(parents.select { |a| found.include?(a) })
+      end
+
+      # The gem's: children first, depth first, then self.
+      def traverse(&block)
+        children.each { |c| c.traverse(&block) }
+        yield self
+        self
+      end
+
+      def matches?(selector)
+        top = ancestors.last
+        top.nil? ? false : top.search(selector).include?(self)
+      end
+
+      def blank?
+        @ref.__blank?
+      end
+
+      def path
+        @ref.__path
+        NokogiriExt.sp_noko_out
+      end
+
+      def line
+        @ref.__line
+      end
+
+      def <<(node)
+        add_child(node)
+        self
+      end
+
       # ---- attributes ------------------------------------------------------
 
       def [](key)
@@ -428,6 +503,63 @@ module Nokogiri
 
       def keys
         attributes.keys
+      end
+
+      def values
+        attributes.values.map { |a| a.value }
+      end
+
+      def value?(value)
+        values.include?(value)
+      end
+
+      # The gem's: [name, value] per attribute, in document order.
+      def each
+        attributes.each { |k, a| yield [k, a.value] }
+        self
+      end
+
+      def delete(key)
+        remove_attribute(key)
+      end
+
+      # ---- class keywords (the gem's kwattr_*) ---------------------------
+
+      def classes
+        Node.keywords(self["class"].to_s)
+      end
+
+      def add_class(names)
+        current = classes
+        Node.keywords(names).each { |k| current << k unless current.include?(k) }
+        self["class"] = current.join(" ")
+        self
+      end
+
+      def append_class(names)
+        self["class"] = (classes + Node.keywords(names)).join(" ")
+        self
+      end
+
+      def remove_class(names = nil)
+        if names.nil?
+          remove_attribute("class")
+          return self
+        end
+        drop = Node.keywords(names)
+        left = classes.reject { |k| drop.include?(k) }
+        if left.empty?
+          remove_attribute("class")
+        else
+          self["class"] = left.join(" ")
+        end
+        self
+      end
+
+      # A String's whitespace-separated words, or an Array's strings.
+      def self.keywords(names)
+        return names.map { |n| n.to_s } if names.is_a?(Array)
+        names.to_s.split(/\s+/).reject { |w| w.empty? }
       end
 
       # ---- content -------------------------------------------------------
@@ -699,6 +831,9 @@ module Nokogiri
       end
     end
 
+    # The gem's NodeSet: an ordered set of nodes that is Enumerable (so
+    # select, reject, sort_by, … answer Arrays, as the gem's do), with set
+    # operations, bulk edits, and searches over every member.
     class NodeSet
       def initialize(nodes)
         @nodes = nodes
@@ -708,25 +843,161 @@ module Nokogiri
         @nodes
       end
 
+      def to_ary
+        @nodes
+      end
+
+      # ---- Enumerable ----------------------------------------------------
+
       def each(&block)
         @nodes.each(&block)
         self
+      end
+
+      def each_with_index(&block)
+        @nodes.each_with_index(&block)
+        self
+      end
+
+      def each_with_object(memo)
+        @nodes.each { |n| yield n, memo }
+        memo
+      end
+
+      def each_slice(n)
+        i = 0
+        while i < @nodes.length
+          yield @nodes[i, n]
+          i += n
+        end
+        nil
       end
 
       def map(&block)
         @nodes.map(&block)
       end
 
+      def collect(&block)
+        @nodes.map(&block)
+      end
+
+      def flat_map(&block)
+        @nodes.flat_map(&block)
+      end
+
+      def filter_map(&block)
+        @nodes.filter_map(&block)
+      end
+
       def select(&block)
-        NodeSet.new(@nodes.select(&block))
+        @nodes.select(&block)
+      end
+
+      def find_all(&block)
+        @nodes.select(&block)
+      end
+
+      def reject(&block)
+        @nodes.reject(&block)
+      end
+
+      def partition(&block)
+        @nodes.partition(&block)
+      end
+
+      def group_by(&block)
+        @nodes.group_by(&block)
+      end
+
+      def sort_by(&block)
+        @nodes.sort_by(&block)
+      end
+
+      def min_by(&block)
+        @nodes.min_by(&block)
+      end
+
+      def max_by(&block)
+        @nodes.max_by(&block)
+      end
+
+      def inject(init)
+        acc = init
+        @nodes.each { |n| acc = yield(acc, n) }
+        acc
+      end
+
+      def reduce(init)
+        acc = init
+        @nodes.each { |n| acc = yield(acc, n) }
+        acc
       end
 
       def find(&block)
         @nodes.find(&block)
       end
 
+      def detect(&block)
+        @nodes.find(&block)
+      end
+
       def find_index(&block)
         @nodes.find_index(&block)
+      end
+
+      # The gem's: the index of a node (by ==), or of the first a block
+      # accepts; nil if none.
+      # The gem's index(node). Its block form (index { |n| … }) is
+      # find_index here until matz/spinel#5097: a method that yields, called
+      # both ways, does not link.
+      def index(node)
+        i = 0
+        while i < @nodes.length
+          return i if @nodes[i] == node
+          i += 1
+        end
+        nil
+      end
+
+      def include?(node)
+        NodeSet.member?(@nodes, node)
+      end
+
+      # Membership by the node's == (the same xmlNode), for an Array of
+      # nodes.
+      def self.member?(nodes, node)
+        i = 0
+        while i < nodes.length
+          return true if nodes[i] == node
+          i += 1
+        end
+        false
+      end
+
+      def any?(&block)
+        return !@nodes.empty? unless block_given?
+        @nodes.any?(&block)
+      end
+
+      def all?(&block)
+        @nodes.all?(&block)
+      end
+
+      def none?(&block)
+        @nodes.none?(&block)
+      end
+
+      def count(&block)
+        return @nodes.length unless block_given?
+        @nodes.count(&block)
+      end
+
+      def take(n)
+        @nodes.take(n)
+      end
+
+      def drop(n)
+        @nodes.drop(n)
       end
 
       def length
@@ -737,25 +1008,114 @@ module Nokogiri
         @nodes.length
       end
 
-      def count
-        @nodes.length
-      end
-
       def empty?
         @nodes.empty?
       end
 
-      def first
-        @nodes.first
+      # The gem's first(n): an Array of the first n.
+      def first(n = nil)
+        return @nodes.first if n.nil?
+        @nodes.take(n)
       end
 
       def last
         @nodes.last
       end
 
-      def [](i)
+      # The gem's []: a node for an index, a NodeSet for (start, length) or
+      # a range.
+      def [](i, len = nil)
+        # (exclusive when the range leaves out its own end: exclude_end? is
+        # not reachable here yet, matz/spinel#5095)
+        return range(i.begin, i.end, !i.end.nil? && !i.include?(i.end)) if i.is_a?(Range)
+        return NodeSet.new(@nodes[i, len] || []) unless len.nil?
         @nodes[i]
       end
+
+      # nodes[a..b] / nodes[a...b], an endless or beginless range too.
+      def range(first, last, exclusive)
+        from = first.nil? ? 0 : first
+        to = last.nil? ? -1 : last
+        from += @nodes.length if from < 0
+        to += @nodes.length if to < 0
+        to -= 1 if exclusive && !last.nil?
+        out = []
+        k = from
+        while k <= to && k < @nodes.length
+          out << @nodes[k] if k >= 0
+          k += 1
+        end
+        NodeSet.new(out)
+      end
+
+      def slice(i, len = nil)
+        self[i, len]
+      end
+
+      def reverse
+        NodeSet.new(@nodes.reverse)
+      end
+
+      # ---- as a set --------------------------------------------------------
+
+      def |(other)
+        out = @nodes.dup
+        other.to_a.each { |n| out << n unless NodeSet.member?(out, n) }
+        NodeSet.new(out)
+      end
+
+      def +(other)
+        self | other
+      end
+
+      def &(other)
+        NodeSet.new(@nodes.select { |n| other.include?(n) })
+      end
+
+      def -(other)
+        NodeSet.new(@nodes.reject { |n| other.include?(n) })
+      end
+
+      def ==(other)
+        return false unless other.is_a?(NodeSet) && other.length == length
+        i = 0
+        while i < length
+          return false unless @nodes[i] == other[i]
+          i += 1
+        end
+        true
+      end
+
+      def push(node)
+        @nodes << node unless include?(node)
+        self
+      end
+
+      def <<(node)
+        push(node)
+      end
+
+      def delete(node)
+        i = index(node)
+        return nil if i.nil?
+        @nodes.delete_at(i)
+      end
+
+      def pop
+        @nodes.pop
+      end
+
+      def shift
+        @nodes.shift
+      end
+
+      def children
+        out = []
+        @nodes.each { |n| n.children.each { |c| out << c } }
+        NodeSet.new(out)
+      end
+
+      # ---- searching -----------------------------------------------------
 
       # The gem's NodeSet#css: each node searched with ".//" AND "self::",
       # so a node of the set that itself matches is found.
@@ -774,7 +1134,7 @@ module Nokogiri
       def each_match(expr, bindings)
         out = []
         @nodes.each do |n|
-          Search.xpath(n, expr, bindings).to_a.each { |m| out << m unless out.any? { |o| o == m } }
+          Search.xpath(n, expr, bindings).to_a.each { |m| out << m unless NodeSet.member?(out, m) }
         end
         NodeSet.new(out)
       end
@@ -783,10 +1143,25 @@ module Nokogiri
         css(*rules).first
       end
 
+      def at_xpath(*args)
+        xpath(*args).first
+      end
+
       def search(*rules)
         r = rules.join(", ")
         Search.looks_like_xpath?(r) ? xpath(r) : css(r)
       end
+
+      def at(*rules)
+        search(*rules).first
+      end
+
+      # The gem's filter(selector): the members the selector matches.
+      def filter(selector)
+        @nodes.select { |n| n.matches?(selector) }
+      end
+
+      # ---- attributes and classes, over every member ---------------------
 
       # The gem's NodeSet#attribute(name): the first node's.
       def attribute(key)
@@ -794,29 +1169,83 @@ module Nokogiri
         n.nil? ? nil : n.attribute(key)
       end
 
-      def attr(key)
-        attribute(key)
+      # attr(name) reads the first node's; attr(name, value) sets it on
+      # every node.
+      def attr(key, value = nil)
+        return attribute(key) if value.nil?
+        set(key, value)
       end
+
+      def set(key, value)
+        @nodes.each { |n| n[key] = value }
+        self
+      end
+
+      def remove_attr(key)
+        @nodes.each { |n| n.remove_attribute(key) }
+        self
+      end
+
+      def remove_attribute(key)
+        remove_attr(key)
+      end
+
+      def add_class(names)
+        @nodes.each { |n| n.add_class(names) }
+        self
+      end
+
+      def append_class(names)
+        @nodes.each { |n| n.append_class(names) }
+        self
+      end
+
+      def remove_class(names = nil)
+        @nodes.each { |n| n.remove_class(names) }
+        self
+      end
+
+      # ---- content and editing -------------------------------------------
 
       def text
         @nodes.map { |n| n.text }.join
+      end
+
+      def inner_text
+        text
       end
 
       def to_html
         @nodes.map { |n| n.to_html }.join
       end
 
+      def to_xml
+        @nodes.map { |n| n.to_xml }.join
+      end
+
       def to_s
-        to_html
+        @nodes.map { |n| n.to_s }.join
       end
 
       def inner_html
         @nodes.map { |n| n.inner_html }.join
       end
 
+      def before(node)
+        @nodes.first.before(node)
+      end
+
+      def after(node)
+        @nodes.last.after(node)
+      end
+
       def remove
         @nodes.each { |n| n.unlink }
         self
+      end
+
+      def unlink
+        remove
       end
     end
 
@@ -881,10 +1310,16 @@ module Nokogiri
   end
 
   # CSS selectors to XPath, the way the gem's CSS engine writes them
-  # (Nokogiri::CSS.xpath_for), for the subset real apps use: type and
-  # universal selectors, `#id`, `.class`, attribute selectors (`[a]`,
-  # `[a=v]`, `~=`, `|=`, `^=`, `$=`, `*=`), comma lists, and the
-  # descendant and child combinators. Anything else raises.
+  # (Nokogiri::CSS::XPathVisitor), so a query finds what the gem's finds:
+  # type, universal and `ns|name` selectors; `#id`, `.class` and attribute
+  # selectors (`[a]`, `=`, `!=`, `~=`, `|=`, `^=`, `$=`, `*=`); the
+  # descendant, child (`>`), adjacent (`+`) and general sibling (`~`)
+  # combinators, leading ones too (`> p`); comma lists; and the
+  # pseudo-classes, with the gem's own XPath for each. A pseudo-class the
+  # gem hands to a custom handler (`:even`, `:checked`, …) becomes the same
+  # `nokogiri:` call, which libxml2 rejects as the gem's does without a
+  # handler. Where the gem's parse would silently drop part of a selector
+  # (`:not(p.x)`, `:has(a, b)`), this raises instead.
   module CSS
     class SyntaxError < Nokogiri::SyntaxError
     end
@@ -897,16 +1332,22 @@ module Nokogiri
     # document order, which is what the gem answers for a comma list. In a
     # document with a default namespace (`default_ns`), an element name
     # with no namespace of its own is in it, as the gem writes: `xmlns:`.
+    # A selector that starts with a combinator is relative to the node
+    # itself, so it takes no context.
     def self.translate(selector, contexts, default_ns)
       parts = []
       split_list(selector).each do |sel|
         body = one(sel.strip, default_ns)
-        contexts.each { |ctx| parts << (ctx + body) }
+        if body.start_with?("./")
+          parts << body
+        else
+          contexts.each { |ctx| parts << (ctx + body) }
+        end
       end
       parts.join(" | ")
     end
 
-    # Splits on commas outside quotes and brackets.
+    # Splits on commas outside quotes, brackets and parentheses.
     def self.split_list(selector)
       out = []
       cur = +""
@@ -919,10 +1360,10 @@ module Nokogiri
         elsif ch == "'" || ch == "\""
           quote = ch
           cur << ch
-        elsif ch == "["
+        elsif ch == "[" || ch == "("
           depth += 1
           cur << ch
-        elsif ch == "]"
+        elsif ch == "]" || ch == ")"
           depth -= 1
           cur << ch
         elsif ch == "," && depth == 0
@@ -936,8 +1377,22 @@ module Nokogiri
       out
     end
 
-    # One complex selector: compounds joined by descendant (" " → "//") or
-    # child (">" → "/") combinators.
+    # The XPath step a combinator writes before the next compound; a
+    # leading one is taken from the node itself (`./`).
+    def self.joiner(comb, leading)
+      step = if comb == ">"
+               "/"
+             elsif comb == "+"
+               "/following-sibling::*[1]/self::"
+             elsif comb == "~"
+               "/following-sibling::"
+             else
+               "//"
+             end
+      leading ? "." + step : step
+    end
+
+    # One complex selector: compounds joined by combinators.
     def self.one(sel, default_ns)
       raise SyntaxError, "nokogiri (spinel): empty CSS selector" if sel.empty?
       out = +""
@@ -952,99 +1407,288 @@ module Nokogiri
         elsif ch == "'" || ch == "\""
           quote = ch
           cur << ch
-        elsif ch == "["
+        elsif ch == "[" || ch == "("
           depth += 1
           cur << ch
-        elsif ch == "]"
+        elsif ch == "]" || ch == ")"
           depth -= 1
           cur << ch
-        elsif depth == 0 && (ch == " " || ch == ">")
+        elsif depth == 0 && (ch == " " || ch == ">" || ch == "+" || ch == "~")
           unless cur.empty?
             out << compound(cur, default_ns)
             cur = +""
           end
-          comb = ch == ">" ? ">" : (comb == ">" ? ">" : " ")
+          if ch != " "
+            raise SyntaxError, "nokogiri (spinel): unexpected '#{ch}' in CSS selector: #{sel}" unless comb == "" || comb == " "
+            comb = ch
+          elsif comb == ""
+            comb = " "
+          end
         else
           if comb != ""
-            out << (comb == ">" ? "/" : "//")
+            out << joiner(comb, out.empty?) unless out.empty? && comb == " "
             comb = ""
           end
           cur << ch
         end
       end
+      raise SyntaxError, "nokogiri (spinel): CSS selector ends in a combinator: #{sel}" unless comb == "" || comb == " "
       out << compound(cur, default_ns) unless cur.empty?
       out
     end
 
-    # tag or * (or ns|tag) followed by #id, .class and [attr…] parts.
     def self.compound(c, default_ns)
+      parts = compound_parts(c, default_ns)
+      tag = parts[0].empty? ? "*" : parts[0]
+      parts[1].empty? ? tag : tag + "[" + parts[1] + "]"
+    end
+
+    # A compound's element name as written ("" when there is none) and its
+    # conditions, joined as the gem joins them: " and ", except that an
+    # of-type pseudo-class opens a bracket of its own ("]["), so its
+    # position counts the elements the conditions before it left.
+    def self.compound_parts(c, default_ns)
       i = 0
       tag = +""
-      while i < c.length && c[i] != "#" && c[i] != "." && c[i] != "["
+      while i < c.length && c[i] != "#" && c[i] != "." && c[i] != "[" && c[i] != ":"
         tag << c[i]
         i += 1
       end
-      tag = +"*" if tag.empty?
+      tag = element_name(tag, default_ns, c) unless tag.empty?
+      preds = +""
+      while i < c.length
+        ch = c[i]
+        pred = +""
+        of_type = false
+        if ch == "#" || ch == "."
+          j = i + 1
+          j += 1 while j < c.length && c[j] != "#" && c[j] != "." && c[j] != "[" && c[j] != ":"
+          word = c[(i + 1)...j]
+          raise SyntaxError, "nokogiri (spinel): unsupported CSS selector: #{c}" if word.empty?
+          pred = ch == "#" ? "@id='#{word}'" : css_class("@class", word)
+          i = j
+        elsif ch == "["
+          j = closing(c, i, "[", "]")
+          pred = attribute(c[(i + 1)...j])
+          i = j + 1
+        else
+          raise SyntaxError, "nokogiri (spinel): unsupported pseudo-element: #{c}" if c[i + 1] == ":"
+          j = i + 1
+          j += 1 while j < c.length && c[j].match?(/[A-Za-z0-9_-]/)
+          name = c[(i + 1)...j]
+          raise SyntaxError, "nokogiri (spinel): unsupported CSS selector: #{c}" if name.empty?
+          if j < c.length && c[j] == "("
+            k = closing(c, j, "(", ")")
+            pred = function(name, c[(j + 1)...k].strip, default_ns)
+            i = k + 1
+          else
+            pred = pseudo_class(name)
+            i = j
+          end
+          of_type = name.match?(/(nth|first|last|only)-of-type/)
+        end
+        if preds.empty?
+          preds << pred
+        else
+          preds << (of_type ? "][" : " and ") << pred
+        end
+      end
+      [tag, preds]
+    end
+
+    def self.element_name(tag, default_ns, c)
       bar = tag.index("|")
       prefix = bar.nil? ? nil : tag[0...bar]
-      tag = tag[(bar + 1)..] unless bar.nil?
-      unless (tag == "*" || tag.match?(/\A[A-Za-z][A-Za-z0-9_-]*\z/)) &&
+      local = bar.nil? ? tag : tag[(bar + 1)..]
+      unless (local == "*" || local.match?(/\A[A-Za-z_][A-Za-z0-9_-]*\z/)) &&
              (prefix.nil? || prefix.empty? || prefix.match?(/\A[A-Za-z_][A-Za-z0-9_.-]*\z/))
         raise SyntaxError, "nokogiri (spinel): unsupported CSS selector: #{c}"
       end
-      if !prefix.nil?
-        tag = prefix + ":" + tag unless prefix.empty?
-      elsif default_ns && tag != "*"
-        tag = "xmlns:" + tag
+      return local if !prefix.nil? && prefix.empty?
+      return prefix + ":" + local unless prefix.nil?
+      return "xmlns:" + local if default_ns && local != "*"
+      local
+    end
+
+    # The index of the `close` that ends the `open` at i, outside quotes.
+    def self.closing(c, i, open, close)
+      depth = 0
+      quote = ""
+      j = i
+      while j < c.length
+        ch = c[j]
+        if quote != ""
+          quote = "" if ch == quote
+        elsif ch == "'" || ch == "\""
+          quote = ch
+        elsif ch == open
+          depth += 1
+        elsif ch == close
+          depth -= 1
+          return j if depth == 0
+        end
+        j += 1
       end
-      preds = +""
-      while i < c.length
-        if c[i] == "#" || c[i] == "."
-          j = i + 1
-          j += 1 while j < c.length && c[j] != "#" && c[j] != "." && c[j] != "["
-          word = c[(i + 1)...j]
-          if c[i] == "#"
-            preds << "[@id='#{word}']"
-          else
-            preds << "[contains(concat(' ',normalize-space(@class),' '),' #{word} ')]"
-          end
-          i = j
-        elsif c[i] == "["
-          j = c.index("]", i)
-          raise SyntaxError, "nokogiri (spinel): unterminated attribute selector: #{c}" if j.nil?
-          preds << "[" << attribute(c[(i + 1)...j]) << "]"
-          i = j + 1
+      raise SyntaxError, "nokogiri (spinel): unterminated '#{open}' in CSS selector: #{c}"
+    end
+
+    def self.css_class(hay, needle)
+      "contains(concat(' ',normalize-space(#{hay}),' '),' #{needle} ')"
+    end
+
+    def self.pseudo_class(name)
+      if name == "first" || name == "first-of-type"
+        "position()=1"
+      elsif name == "last" || name == "last-of-type"
+        "position()=last()"
+      elsif name == "first-child"
+        "count(preceding-sibling::*)=0"
+      elsif name == "last-child"
+        "count(following-sibling::*)=0"
+      elsif name == "only-child"
+        "count(preceding-sibling::*)=0 and count(following-sibling::*)=0"
+      elsif name == "only-of-type"
+        "last()=1"
+      elsif name == "empty"
+        "not(node())"
+      elsif name == "parent"
+        "node()"
+      elsif name == "root"
+        "not(parent::*)"
+      else
+        custom_name(name)
+        "nokogiri:#{name}(.)"
+      end
+    end
+
+    def self.custom_name(name)
+      raise SyntaxError, "Invalid XPath function name '#{name}'" if name.start_with?("-")
+      nil
+    end
+
+    def self.function(name, arg, default_ns)
+      int = arg.match?(/\A-?\d+\z/)
+      if name == "not"
+        negation(arg, default_ns)
+      elsif name == "has"
+        raise SyntaxError, "nokogiri (spinel): unsupported :has() with a selector list: #{arg}" if split_list(arg).length > 1
+        body = one(arg, default_ns)
+        body.start_with?("./") ? body : ".//" + body
+      elsif name == "eq"
+        "position()=#{arg}"
+      elsif name == "gt"
+        "position()>#{arg}"
+      elsif name == "contains"
+        "contains(.,#{arg})"
+      elsif name == "nth" || name == "nth-of-type"
+        int ? "position()=#{arg}" : nth(arg, false, false)
+      elsif name == "nth-child"
+        int ? "count(preceding-sibling::*)=#{arg.to_i - 1}" : nth(arg, true, false)
+      elsif name == "nth-last-of-type"
+        if int
+          index = arg.to_i - 1
+          index == 0 ? "position()=last()" : "position()=last()-#{index}"
         else
-          raise SyntaxError, "nokogiri (spinel): unsupported CSS selector: #{c}"
+          nth(arg, false, true)
+        end
+      elsif name == "nth-last-child"
+        int ? "count(following-sibling::*)=#{arg.to_i - 1}" : nth(arg, true, true)
+      else
+        custom_name(name)
+        "nokogiri:#{name}(.,#{arg})"
+      end
+    end
+
+    # :not(simple): the gem's `not(self::name)` for an element name, else
+    # not(conditions). An element name WITH conditions the gem's parser
+    # reduces to the name alone; rather than drop them, raise.
+    def self.negation(arg, default_ns)
+      if arg.empty? || split_list(arg).length > 1 || combinator?(arg)
+        raise SyntaxError, "nokogiri (spinel): unsupported :not(#{arg})"
+      end
+      parts = compound_parts(arg, default_ns)
+      if parts[1].empty?
+        "not(self::#{parts[0].empty? ? "*" : parts[0]})"
+      elsif parts[0].empty?
+        "not(#{parts[1]})"
+      else
+        raise SyntaxError, "nokogiri (spinel): unsupported :not(#{arg}) (an element name with conditions)"
+      end
+    end
+
+    # Whether a selector has a combinator outside quotes, brackets and
+    # parentheses (so is more than one compound).
+    def self.combinator?(sel)
+      quote = ""
+      depth = 0
+      found = false
+      sel.each_char do |ch|
+        if quote != ""
+          quote = "" if ch == quote
+        elsif ch == "'" || ch == "\""
+          quote = ch
+        elsif ch == "[" || ch == "("
+          depth += 1
+        elsif ch == "]" || ch == ")"
+          depth -= 1
+        elsif depth == 0 && (ch == " " || ch == ">" || ch == "+" || ch == "~")
+          found = true
         end
       end
-      tag + preds
+      found
+    end
+
+    # an+b, as the gem writes it (XPathVisitor#nth, #read_a_and_positive_b).
+    def self.nth(arg, child, last)
+      s = arg.delete(" ")
+      s = "2n+1" if s == "odd"
+      s = "2n+0" if s == "even"
+      m = s.match(/\A([+-]?\d*)n(?:([+-])(\d+))?\z/)
+      raise SyntaxError, "nokogiri (spinel): unsupported an+b: #{arg}" if m.nil?
+      a_s = m[1].to_s
+      a = a_s == "" || a_s == "+" ? 1 : (a_s == "-" ? -1 : a_s.to_i)
+      b = m[3].nil? ? 0 : m[3].to_s.to_i
+      b = a - (b % a) if m[2] == "-"
+      position = if child
+                   last ? "(count(following-sibling::*)+1)" : "(count(preceding-sibling::*)+1)"
+                 else
+                   last ? "(last()-position()+1)" : "position()"
+                 end
+      return "(#{position} mod #{a})=0" if b == 0
+      compare = a < 0 ? "<=" : ">="
+      return "#{position}#{compare}#{b}" if a.abs == 1
+      "(#{position}#{compare}#{b}) and (((#{position}-#{b}) mod #{a.abs})=0)"
     end
 
     # One attribute test. The value keeps the quotes it was written with,
     # as the gem's does (`[a='v']` → `@a='v'`, `[a="v"]` → `@a="v"`); a bare
     # value is written with single quotes.
     def self.attribute(body)
-      m = body.match(/\A\s*([A-Za-z_:][A-Za-z0-9_:.-]*(?:\|[A-Za-z_][A-Za-z0-9_.-]*)?)\s*(?:([~|^$*]?=)\s*(.+?))?\s*\z/)
+      m = body.match(/\A\s*([A-Za-z_:][A-Za-z0-9_:.-]*(?:\|[A-Za-z_][A-Za-z0-9_.-]*)?)\s*(?:([~|^$*!]?=)\s*(.+?))?\s*\z/)
       raise SyntaxError, "nokogiri (spinel): unsupported attribute selector: [#{body}]" if m.nil?
-      name = m[1].to_s.sub("|", ":")
+      name = "@" + m[1].to_s.sub("|", ":")
       op = m[2]
-      return "@#{name}" if op.nil?
+      return name if op.nil?
       raw = m[3].to_s
       lit = (raw.start_with?("'") || raw.start_with?("\"")) ? raw : "'#{raw}'"
       bare = lit[1...-1]
+      if bare.include?(lit[0])
+        lit = "concat(\"" + bare.split("\"", -1).join("\",'\"',\"") + "\",\"\")"
+      end
       if op == "="
-        "@#{name}=#{lit}"
+        "#{name}=#{lit}"
+      elsif op == "!="
+        "#{name}!=#{lit}"
       elsif op == "~="
-        "contains(concat(' ',normalize-space(@#{name}),' '),' #{bare} ')"
+        css_class(name, bare)
       elsif op == "|="
-        "@#{name}=#{lit} or starts-with(@#{name},concat(#{lit},'-'))"
+        "#{name}=#{lit} or starts-with(#{name},concat(#{lit},'-'))"
       elsif op == "^="
-        "starts-with(@#{name},#{lit})"
+        "starts-with(#{name},#{lit})"
       elsif op == "$="
-        "substring(@#{name},string-length(@#{name})-string-length(#{lit})+1,string-length(#{lit}))=#{lit}"
+        "substring(#{name},string-length(#{name})-string-length(#{lit})+1,string-length(#{lit}))=#{lit}"
       else
-        "contains(@#{name},#{lit})"
+        "contains(#{name},#{lit})"
       end
     end
   end

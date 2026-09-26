@@ -1,0 +1,98 @@
+["one", "two", "three", "four", "five"]
+1:two
+3:four
+["one", "two", "three", "five"]
+Array
+["one", "two", "four"]
+"two"
+2
+4
+true
+false
+true
+true
+true
+3
+["one", "two"]
+5
+["one", "two", "three"]
+["four", "five"]
+one+two
+three+four
+five
+["3=2", "5=1", "4=2"]
+[4, 1]
+["five", "four", "one", "three", "two"]
+"five"
+"three"
+19
+["a", "b", "a", "b", "c"]
+["a", "b", "a b", "c"]
+["ONE", "TWO", "THREE", "FOUR", "FIVE"]
+5
+"five"
+"two"
+"five"
+["two", "three"]
+["two", "three"]
+2
+["five", "four", "three", "two", "one"]
+["one", "three"]
+["one", "three", "two"]
+3
+["three"]
+["one"]
+true
+false
+["li", "p", "em"]
+"em"
+"li"
+1
+"p"
+true
+11
+["text", "em"]
+"onetwothreefourfive"
+"<em>em</em>"
+"five"
+nil
+"em"
+["a item", "b item", "a b item", "item", "c item"]
+["item", "b item", "b item", "item", "c item"]
+"item item"
+false
+["1"]
+"1"
+["class", "data-y"]
+["box", "wide"]
+"box wide tall"
+"box wide tall box x"
+"wide tall"
+false
+["p", "div", "body", "html", "document"]
+["d"]
+0
+["text", "text", "em", "p"]
+true
+false
+true
+["class=item item", "data-y=2"]
+["item item", "2"]
+false
+5
+"one"
+"five"
+"two"
+"one"
+nil
+true
+false
+"/html/body/div/p/em"
+"/html/body/div/ul/text()[1]"
+10
+["one", "two", "three", "four", "five", "six"]
+["data-y"]
+"/r/a[1]/b"
+2
+["/r/a[1]", "/r/a[2]"]
+["a", "a"]

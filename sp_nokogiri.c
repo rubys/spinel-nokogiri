@@ -636,6 +636,11 @@ sp_int sp_NokoNode_xpath(sp_NokoNode *self, const char *expr, const char *bindin
 	ctx = xmlXPathNewContext(self->owner->doc);
 	ctx->node = self->node;
 	ctx->error = sp_nk_xpath_error;
+	/* The gem's XPathContext binds its handler namespace in every query,
+	   so a `nokogiri:` function no handler defines (what `:even` or
+	   `:checked` become) fails as "Unregistered function". */
+	xmlXPathRegisterNs(ctx, (const xmlChar *)"nokogiri",
+	                   (const xmlChar *)"http://www.nokogiri.org/default_ns/ruby/extensions_functions");
 	sp_nk_register_ns(ctx, bindings);
 	sp_nk_xp = xmlXPathEvalExpression((const xmlChar *)expr, ctx);
 	xmlXPathFreeContext(ctx);
@@ -776,4 +781,24 @@ void sp_NokoNode_remove_namespaces(sp_NokoNode *self)
 	pthread_mutex_lock(&sp_nk_lock);
 	sp_nk_remove_ns(self->owner, self->node);
 	pthread_mutex_unlock(&sp_nk_lock);
+}
+
+/* ---- node facts -------------------------------------------------------- */
+
+/* Node#path: xmlGetNodePath, as the gem answers it. */
+sp_int sp_NokoNode_path(sp_NokoNode *self)
+{
+	return (sp_int)strlen(sp_nk_set_out(xmlGetNodePath(self->node)));
+}
+
+/* Node#line: xmlGetLineNo (BIG_LINES is in both default parse options). */
+sp_int sp_NokoNode_line(sp_NokoNode *self)
+{
+	return (sp_int)xmlGetLineNo(self->node);
+}
+
+/* Node#blank?: xmlIsBlankNode -- a text node of whitespace only. */
+sp_bool sp_NokoNode_blank_p(sp_NokoNode *self)
+{
+	return xmlIsBlankNode(self->node) == 1;
 }

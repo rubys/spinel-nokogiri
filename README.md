@@ -98,21 +98,52 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   default namespace and reads `ns|name`, as the gem does; a reparented
   element is relinked into the namespaces where it lands (the gem's
   `relink_namespace`, without the opt-in `namespace_inheritance`).
-- `NodeSet` (`each`, `map`, `select`,
-  `find`, `find_index`, `first`, `last`, `[]`, `length`, `empty?`, `css`,
-  `xpath`, `attribute`, `text`, `to_html`, `inner_html`, `remove`).
-- CSS: type and universal selectors, `#id`, `.class`, attribute
-  selectors (`[a]`, `[a=v]`, `~=`, `|=`, `^=`, `$=`, `*=`), comma lists,
-  descendant and child combinators, `ns|name`. Anything else
-  (pseudo-classes, sibling combinators, `*|name`) raises `Nokogiri::CSS::SyntaxError`
-  rather than guessing.
+- More of `Node`: `ancestors` (and with a selector), `traverse`,
+  `matches?`, `elements` / `element_children`, `first_element_child`,
+  `last_element_child`, `next_element`, `previous_element`, `classes`,
+  `add_class`, `append_class`, `remove_class` (a String or an Array),
+  `each` (name, value), `values`, `value?`, `delete`, `<<`, `path`,
+  `line`, `blank?`.
+- `NodeSet` is the gem's Enumerable one — `select`, `reject`,
+  `find_all`, `sort_by`, `group_by`, `partition`, `take`, `drop`,
+  `first(n)` … answer Arrays, as they do in the gem — with `each`,
+  `each_with_index`, `each_with_object`, `each_slice`, `map`,
+  `flat_map`, `filter_map`, `find` / `detect`, `find_index`,
+  `index(node)`, `include?`, `any?`, `all?`, `none?`, `count`, `min_by`,
+  `max_by`, `inject` / `reduce` (with an initial value), `[]` (an index,
+  start and length, or a range), `slice`, `first`, `last`, `length`,
+  `empty?`, `reverse`; as a set, `|` / `+`, `&`, `-`, `==`, `push` /
+  `<<`, `delete`, `pop`, `shift`, `children`; searching, `css`, `xpath`,
+  `at_css`, `at_xpath`, `search`, `at`, `filter(selector)`; over every
+  member, `attr` / `set`, `remove_attr`, `add_class`, `append_class`,
+  `remove_class`, `before`, `after`, `remove` / `unlink`; and `text`,
+  `to_html`, `to_xml`, `inner_html`.
+- CSS, written as the gem's XPathVisitor writes it: type, universal and
+  `ns|name` selectors, `#id`, `.class`, attribute selectors (`[a]`,
+  `[a=v]`, `!=`, `~=`, `|=`, `^=`, `$=`, `*=`), comma lists; the
+  descendant, child, adjacent (`+`) and general sibling (`~`)
+  combinators, leading ones too (`node.css("> li")`); the pseudo-classes
+  `:first-child`, `:last-child`, `:only-child`, `:first-of-type`,
+  `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`,
+  `:nth-of-type()`, `:nth-last-of-type()` (an integer, `odd`, `even` or
+  `an+b`), `:not()`, `:has()`, `:contains()`, `:empty`, `:parent`,
+  `:root`, and jQuery's `:first`, `:last`, `:eq()`, `:nth()`, `:gt()`.
+  The pseudo-classes the gem leaves to a custom handler (`:even`, `:odd`,
+  `:lt()`, `:checked`, `:disabled`, …) raise the gem's own
+  `XPath::SyntaxError` ("Unregistered function"). Where the gem's parser
+  would silently drop part of a selector — `:not(p.x)` becomes
+  `:not(p)`, `:has(a, b)` becomes `:has(a)` — this raises
+  `Nokogiri::CSS::SyntaxError` instead; so do pseudo-elements (`::before`)
+  and `*|name`.
 - Not yet: `Nokogiri::HTML5` (the gem's vendored gumbo parser — the next
   version), an IO or file argument to a parse, XML fragments,
   `create_element`'s contents and attributes arguments, DTDs and
   validation, XPath variable bindings and custom functions, an XPath
   expression that is not a node set, a fragment parsed in a context
-  node, `Builder`,
-  `Node.new`, moving nodes between documents.
+  node (so `inner_html=`, `children=`, and `wrap` / `add_child` with a
+  markup String), `Builder`, `Node.new`, moving nodes between documents,
+  custom pseudo-class handlers, and `NodeSet#index`'s block form (use
+  `find_index`; matz/spinel#5097).
 - libxml2 is built **without iconv**: it decodes UTF-8, UTF-16, ISO-8859-1
   and ASCII itself, which covers a UTF-8 String; a document declaring
   another charset is decoded differently from the gem. Without zlib and
@@ -143,6 +174,10 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
   escaping, `replace` with a set, whole-document serialization.
 - `test/fragment_test.rb` — fragments (campfire's turbo-stream test
   helper) and `meta_encoding` (campfire's Opengraph).
+- `test/css_test.rb` — the combinators and pseudo-classes, answer by
+  answer, in HTML and in a default-namespace XML document.
+- `test/nodeset_test.rb` — NodeSet as Enumerable, as a set, and bulk
+  edits; the Node conveniences.
 - `test/xml_test.rb` — XML documents: an Atom feed (default and prefixed
   namespaces, CSS and XPath over them), RSS, CDATA / comment / PI nodes,
   the XML serializer, errors recovered and strict, `remove_namespaces!`,
