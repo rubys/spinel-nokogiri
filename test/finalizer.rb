@@ -26,7 +26,22 @@ kept = []
   doc.css("a").each { |a| a[:rel] = "ugc" }
   bytes += doc.at_css("body").inner_html.length
 end
-puts "kept detached: #{kept.map { |n| n["src"] }.length}"
+# XML documents too, with the namespace definitions remove_namespaces!
+# and a reparent's relinking take off their elements (kept with the owner
+# and freed with the document), and parse errors.
+xml_made = 0
+3000.times do |i|
+  doc = Nokogiri::XML("<f xmlns=\"u\" xmlns:m=\"mm\"><e><m:t n=\"#{i}\"/></e><bad></f>")
+  xml_made += 1
+  e = doc.create_element("e")
+  e.add_child(doc.create_element("m:t"))
+  doc.root.add_child(e)
+  kept << e if i % 100 == 0
+  doc.remove_namespaces! if i.even?
+  bytes += doc.to_xml.length + doc.errors.length
+end
+made += xml_made
+puts "kept detached: #{kept.length}"
 kept = []
 GC.start
 live = NokogiriExt.sp_noko_live_documents

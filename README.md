@@ -84,16 +84,33 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   `Nokogiri::HTML.fragment` / `HTML4::DocumentFragment` (parsed as the gem
   parses a fragment without a context, and reparented into a real fragment
   node, which is what libxml2's serializer keys its newlines on);
-  `NodeSet` (`each`, `map`, `select`,
+  `Nokogiri::XML` / `XML::Document.parse` (a String; the declaration
+  names the encoding; `ParseOptions::DEFAULT_XML`, or an Integer, or the
+  block form `{ |config| config.strict.noblanks }`): a malformed document
+  is recovered with its `errors` (`XML::SyntaxError`: `level`, `line`,
+  `column`, the gem's `to_s`) unless strict, which raises; `Document#xml?`,
+  `html?`, `version`, `remove_namespaces!`; `Node#to_xml`, and `to_s` as
+  XML in an XML document; `cdata?`, `processing_instruction?`.
+- Namespaces: `Node#namespace` (`XML::Namespace`: `prefix`, `href`),
+  `namespaces`, `namespace_definitions`; `xpath` binds the root's
+  namespaces by default (a default namespace is `xmlns:`), or a Hash
+  given after the paths; CSS puts an unprefixed element name in the
+  default namespace and reads `ns|name`, as the gem does; a reparented
+  element is relinked into the namespaces where it lands (the gem's
+  `relink_namespace`, without the opt-in `namespace_inheritance`).
+- `NodeSet` (`each`, `map`, `select`,
   `find`, `find_index`, `first`, `last`, `[]`, `length`, `empty?`, `css`,
   `xpath`, `attribute`, `text`, `to_html`, `inner_html`, `remove`).
 - CSS: type and universal selectors, `#id`, `.class`, attribute
   selectors (`[a]`, `[a=v]`, `~=`, `|=`, `^=`, `$=`, `*=`), comma lists,
-  descendant and child combinators. Anything else (pseudo-classes,
-  sibling combinators, namespaces) raises `Nokogiri::CSS::SyntaxError`
+  descendant and child combinators, `ns|name`. Anything else
+  (pseudo-classes, sibling combinators, `*|name`) raises `Nokogiri::CSS::SyntaxError`
   rather than guessing.
 - Not yet: `Nokogiri::HTML5` (the gem's vendored gumbo parser — the next
-  version), `Nokogiri::XML` documents, a fragment parsed in a context
+  version), an IO or file argument to a parse, XML fragments,
+  `create_element`'s contents and attributes arguments, DTDs and
+  validation, XPath variable bindings and custom functions, an XPath
+  expression that is not a node set, a fragment parsed in a context
   node, `Builder`,
   `Node.new`, moving nodes between documents.
 - libxml2 is built **without iconv**: it decodes UTF-8, UTF-16, ISO-8859-1
@@ -126,7 +143,11 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
   escaping, `replace` with a set, whole-document serialization.
 - `test/fragment_test.rb` — fragments (campfire's turbo-stream test
   helper) and `meta_encoding` (campfire's Opengraph).
-- `test/finalizer.rb` — the owners, released.
+- `test/xml_test.rb` — XML documents: an Atom feed (default and prefixed
+  namespaces, CSS and XPath over them), RSS, CDATA / comment / PI nodes,
+  the XML serializer, errors recovered and strict, `remove_namespaces!`,
+  namespace relinking.
+- `test/finalizer.rb` — the owners, released (HTML and XML documents).
 
 The snapshots are the gem's answers (Nokogiri 1.19.4), frozen; no
 hand-authored expectations.

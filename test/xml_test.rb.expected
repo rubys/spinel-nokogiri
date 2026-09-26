@@ -1,0 +1,60 @@
+true
+false
+"feed"
+"xmlns=http://www.w3.org/2005/Atom xmlns:media=http://search.yahoo.com/mrss/"
+"utf-8"
+"1.0"
+["/a", "/b"]
+["1", "2"]
+"T & U"
+["1", "2"]
+0
+["thumbnail t.png"]
+["media http://search.yahoo.com/mrss/"]
+1
+nil
+"http://www.w3.org/2005/Atom"
+"xmlns=http://www.w3.org/2005/Atom xmlns:media=http://search.yahoo.com/mrss/"
+["=http://www.w3.org/2005/Atom", "media=http://search.yahoo.com/mrss/"]
+0
+[4, "#cdata-section", "<p>hi</p>", true]
+["3:text", "1:title", "3:text", "1:entry", "3:text", "1:entry", "3:text", "8:comment", "3:text", "7:pi", "3:text"]
+["data"]
+"<title>T &amp; U</title>"
+"<title>T &amp; U</title>"
+"<entry>\n  <id>1</id>\n  <link href=\"/a\" rel=\"alternate\"/>\n  <media:thumbnail url=\"t.png\"/>\n  <content type=\"html\"><![CDATA[<p>hi</p>]]></content>\n</entry>"
+"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:media=\"http://search.yahoo.com/mrss/\">\n  <title>T &amp; U</title>\n  <entry><id>1</id><link href=\"/a\" rel=\"alternate\"/><media:thumbnail url=\"t.png\"/><content type=\"html\"><![CDATA[<p>hi</p>]]></content></entry>\n  <entry><id>2</id><link href=\"/b\"/></entry>\n  <!-- c -->\n  <?pi data?>\n</feed>\n"
+"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:media=\"http://search.yahoo.com/mrss/\">\n  <title>T &amp; U</title>\n  <entry><id>1</id><link href=\"/a\" rel=\"alternate\"/><media:thumbnail url=\"t.png\"/><content type=\"html\"><![CDATA[<p>hi</p>]]></content></entry>\n  <entry><id>2</id><link href=\"/b\"/></entry>\n  <!-- c -->\n  <?pi data?>\n</feed>\n"
+"ERROR: Undefined namespace prefix: //a:x"
+"ERROR: Invalid expression: //["
+"Chan"
+["One", "Two"]
+["case"]
+["https://a.test/1", "https://a.test/2"]
+"2.0"
+""
+true
+nil
+"<channel><title>Chan</title>\n<item><title>One</title><link>https://a.test/1</link></item>\n<item><title>Two</title><link>https://a.test/2</link><Title>case</Title></item>\n<item><title>Three &amp; &lt;more&gt;</title></item></channel>"
+["x"]
+"<?xml version=\"1.0\"?>\n<a>\n  <B>x</B>\n  <b>y</b>\n  <br/>\n</a>\n"
+"<a><B>x</B><b>y</b><br></a>"
+"<?xml version=\"1.0\"?>\n"
+true
+true
+"<?xml version=\"1.0\"?>\n<a>&bogus;<b/></a>\n"
+["1:11: FATAL: Entity 'bogus' not defined", "1:18: FATAL: Opening and ending tag mismatch: b line 1 and a"]
+[[3, 1, 11], [3, 1, 18]]
+376 0
+["strict", "1:11: FATAL: Opening and ending tag mismatch: b line 1 and a", 1, 11, 3]
+["block", "1:11: FATAL: Opening and ending tag mismatch: b line 1 and a"]
+1
+["1", "2"]
+"thumbnail"
+""
+"<entry>\n  <id>1</id>\n  <link href=\"/a\" rel=\"alternate\"/>\n  <thumbnail url=\"t.png\"/>\n  <content type=\"html\"><![CDATA[<p>hi</p>]]></content>\n</entry>"
+"http://www.w3.org/2005/Atom"
+2
+["thumb", "m", "mm"]
+1
+"<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:m=\"mm\">\n  <entry/>\n  <entry/>\n  <m:thumb/>\n</feed>"
