@@ -26,7 +26,6 @@ module NokogiriNodePackage
 
   native_method :__present?,         [], :bool,                     "sp_NokoNode_present_p"
   native_method :__same?,            [:any], :bool,                 "sp_NokoNode_same_p"
-  native_method :__same_document?,   [:any], :bool,                 "sp_NokoNode_same_document_p"
   native_method :__parse_html,       [:string, :string, :int], :self, "sp_NokoNode_parse_html"
   native_method :__parse_xml,        [:string, :string, :int], :self, "sp_NokoNode_parse_xml"
   native_method :__new_xml_document, [], :self,                     "sp_NokoNode_new_xml_document"
@@ -59,6 +58,10 @@ module NokogiriNodePackage
   native_method :__add_previous_sibling, [:any], :self,             "sp_NokoNode_add_previous_sibling"
   native_method :__add_next_sibling, [:any], :self,                 "sp_NokoNode_add_next_sibling"
   native_method :__add_child,        [:any], :self,                 "sp_NokoNode_add_child"
+  native_method :__replace,          [:any], :self,                 "sp_NokoNode_replace"
+  native_method :__dup,              [:int], :self,                 "sp_NokoNode_dup"
+  native_method :__in_context,       [:string, :int], :int,         "sp_NokoNode_in_context"
+  native_method :__in_context_result, [:int], :self,                "sp_NokoNode_in_context_result"
   native_method :__xpath,            [:string, :string], :int,      "sp_NokoNode_xpath"
   native_method :__xpath_result,     [:int], :self,                 "sp_NokoNode_xpath_result"
   native_method :__serialize,        [:int], :int,                  "sp_NokoNode_serialize"
@@ -83,6 +86,12 @@ module Nokogiri
     XML::Document.parse(xml, url, encoding, options, &block)
   end
 
+  module XML
+    def self.fragment(tags)
+      DocumentFragment.parse(tags)
+    end
+  end
+
   # The gem's Nokogiri::HTML(string) — an HTML4 document.
   def self.HTML(html)
     HTML4::Document.parse(html)
@@ -101,6 +110,7 @@ module Nokogiri
     PI_NODE = 7
     COMMENT_NODE = 8
     DOCUMENT_NODE = 9
+    DOCUMENT_FRAG_NODE = 11
     HTML_DOCUMENT_NODE = 13
     DTD_NODE = 14
 
@@ -182,6 +192,95 @@ module Nokogiri
       def set(bit)
         @options |= bit
         self
+      end
+    end
+
+    # The gem's DocumentFragment: nodes with no parent of their own, held by
+    # a fragment node in a document. Without a context the markup is
+    # parsed on its own (inside a <root>); with one, in that node's
+    # context (Node#parse).
+    class DocumentFragment
+      def initialize(document, tags = nil, context = nil, options = ParseOptions::DEFAULT_XML)
+        @doc = document
+        @frag = Node.new(document.__ref.__create_fragment)
+        @errors = []
+        fill(tags, context, options) unless tags.nil?
+      end
+
+      def fill(tags, context, options)
+        if context.nil?
+          wrapper = Document.parse("<root>#{tags}</root>", nil, nil, options)
+          @errors = wrapper.errors
+          nodes = wrapper.xpath("/root/node()")
+        else
+          nodes = context.parse(tags, options)
+        end
+        nodes.each { |c| @frag.__ref.__add_child(c.__ref) }
+        nil
+      end
+
+      def self.parse(tags)
+        DocumentFragment.new(Document.new(NokoNodeRef.new.__new_xml_document), tags)
+      end
+
+      def document
+        @doc
+      end
+
+      def errors
+        @errors
+      end
+
+      def children
+        @frag.children
+      end
+
+      def fragment?
+        true
+      end
+
+      def add_child(node_or_tags)
+        @frag.add_child(node_or_tags)
+      end
+
+      def css(*rules)
+        children.css(*rules)
+      end
+
+      def at_css(*rules)
+        children.css(*rules).first
+      end
+
+      def xpath(*paths)
+        children.xpath(*paths)
+      end
+
+      def at_xpath(*paths)
+        children.xpath(*paths).first
+      end
+
+      def search(*rules)
+        children.search(*rules)
+      end
+
+      def text
+        children.text
+      end
+
+      def inner_html
+        children.to_html
+      end
+
+      def to_html
+        children.to_html
+      end
+
+      def to_xml
+        children.to_xml
+      end
+
+      def to_s
+        children.to_s
       end
     end
 
@@ -584,30 +683,131 @@ module Nokogiri
       end
 
       # ---- editing -------------------------------------------------------
+      #
+      # Each of these takes a node, a NodeSet, or markup: a String is
+      # parsed in the context of where it is going (Node#coerce), so
+      # `tr.add_child("<td>…")` makes a cell. A node from another document
+      # is copied in, and the handle passed now holds the copy, as in the
+      # gem.
 
-      def add_previous_sibling(node)
-        check_same_document(node)
-        Node.wrap(@ref.__add_previous_sibling(node.__ref))
+      # The gem's: nodes to add, from a node, a NodeSet, a fragment or
+      # markup.
+      def coerce(data)
+        return data if data.is_a?(NodeSet)
+        return data.children if data.is_a?(DocumentFragment)
+        return fragment(data).children if data.is_a?(String)
+        return data if data.is_a?(Node) && !data.is_a?(Document)
+        raise ArgumentError, "Requires a Node, NodeSet or String argument, and cannot accept a #{data.class}."
       end
 
-      def add_next_sibling(node)
-        check_same_document(node)
-        Node.wrap(@ref.__add_next_sibling(node.__ref))
+      def add_child(node_or_tags)
+        nodes = coerce(node_or_tags)
+        if nodes.is_a?(NodeSet)
+          nodes.each { |n| @ref.__add_child(n.__ref) }
+        else
+          @ref.__add_child(nodes.__ref)
+        end
+        nodes
       end
 
-      def before(node)
-        add_previous_sibling(node)
+      def <<(node_or_tags)
+        add_child(node_or_tags)
         self
       end
 
-      def after(node)
-        add_next_sibling(node)
+      def add_previous_sibling(node_or_tags)
+        check_root_sibling(node_or_tags)
+        add_sibling(false, node_or_tags)
+      end
+
+      def add_next_sibling(node_or_tags)
+        check_root_sibling(node_or_tags)
+        add_sibling(true, node_or_tags)
+      end
+
+      def before(node_or_tags)
+        add_previous_sibling(node_or_tags)
         self
       end
 
-      def add_child(node)
-        check_same_document(node)
-        Node.wrap(@ref.__add_child(node.__ref))
+      def after(node_or_tags)
+        add_next_sibling(node_or_tags)
+        self
+      end
+
+      # The gem's: prepend before the first child, or add the only one.
+      def prepend_child(node_or_tags)
+        first = child
+        return add_child(node_or_tags) if first.nil?
+        if document? && !(node_or_tags.is_a?(Node) && (node_or_tags.comment? || node_or_tags.processing_instruction?))
+          raise "Document already has a root node"
+        end
+        first.add_sibling(false, node_or_tags)
+      end
+
+      # The gem's replace: a NodeSet goes in node by node before this one,
+      # a node takes this one's place; either way this one is unlinked. A
+      # text node is first swapped for a placeholder element, as the gem
+      # does.
+      def replace(node_or_tags)
+        raise "Cannot replace a node with no parent" if parent.nil?
+        if text?
+          dummy = document.create_element("dummy")
+          @ref.__add_previous_sibling(dummy.__ref)
+          unlink
+          return dummy.replace(node_or_tags)
+        end
+        nodes = parent.coerce(node_or_tags)
+        if nodes.is_a?(NodeSet)
+          nodes.each { |n| add_previous_sibling(n) }
+          unlink
+        else
+          @ref.__replace(nodes.__ref)
+        end
+        nodes
+      end
+
+      def swap(node_or_tags)
+        replace(node_or_tags)
+        self
+      end
+
+      def children=(node_or_tags)
+        nodes = coerce(node_or_tags)
+        children.unlink
+        if nodes.is_a?(NodeSet)
+          nodes.each { |n| @ref.__add_child(n.__ref) }
+        else
+          @ref.__add_child(nodes.__ref)
+        end
+      end
+
+      def inner_html=(node_or_tags)
+        self.children = node_or_tags
+      end
+
+      # The gem's wrap: markup (parsed where this node is) or a copy of a
+      # node becomes this node's new parent, in this node's place.
+      def wrap(node_or_tags)
+        if node_or_tags.is_a?(String)
+          context = parent.nil? ? document : parent
+          new_parent = context.coerce(node_or_tags).first
+          raise "Failed to parse '#{node_or_tags}' in the context of a '#{context.name}' element" if new_parent.nil?
+        else
+          new_parent = node_or_tags.dup
+        end
+        if parent.nil?
+          new_parent.unlink
+        else
+          add_next_sibling(new_parent)
+        end
+        new_parent.add_child(self)
+        self
+      end
+
+      # A copy in this document: with its children (level 1) or not (0).
+      def dup(level = 1)
+        Node.wrap(@ref.__dup(level))
       end
 
       def unlink
@@ -619,17 +819,64 @@ module Nokogiri
         unlink
       end
 
-      # The gem's replace: a NodeSet goes in node by node before this one,
-      # a node takes this one's place; either way this one is unlinked.
-      def replace(node_or_set)
-        raise "Cannot replace a node with no parent" if parent.nil?
-        if node_or_set.is_a?(NodeSet)
-          node_or_set.to_a.each { |n| add_previous_sibling(n) }
-        else
-          add_previous_sibling(node_or_set)
+      # The gem's Node#parse: markup parsed in this node's context
+      # (xmlParseInNodeContext), answering the new top-level nodes, not
+      # yet in the tree. A parse with errors raises unless the options
+      # recover, and one that recovers nothing falls back to a
+      # context-free fragment.
+      def parse(string, options = nil)
+        if !element? && !document? && (parent.nil? || parent.fragment?)
+          return document.parse(string, options)
         end
-        unlink
-        node_or_set
+        opts = options.nil? ? (document.html? ? ParseOptions::DEFAULT_HTML : ParseOptions::DEFAULT_XML) : options
+        return NodeSet.new([]) if string.empty?
+        before = @ref.__error_count
+        n = @ref.__in_context(string, opts)
+        out = []
+        i = 0
+        while i < n
+          r = Node.wrap(@ref.__in_context_result(i))
+          out << r unless r.nil?
+          i += 1
+        end
+        set = NodeSet.new(out)
+        if @ref.__error_count > before
+          raise Document.errors_of(@ref)[before] if opts & ParseOptions::RECOVER == 0
+          if set.empty?
+            set = document.html? ? HTML4::DocumentFragment.parse(string).children : DocumentFragment.parse(string).children
+          end
+        end
+        set
+      end
+
+      # The gem's: a fragment of markup parsed in this node's context.
+      def fragment(tags)
+        return HTML4::DocumentFragment.new(document, tags, self) if document.html?
+        DocumentFragment.new(document, tags, self)
+      end
+
+      def fragment?
+        node_type == DOCUMENT_FRAG_NODE
+      end
+
+      def add_sibling(nxt, node_or_tags)
+        raise "Cannot add sibling to a node with no parent" if parent.nil?
+        nodes = parent.coerce(node_or_tags)
+        if nodes.is_a?(NodeSet)
+          pivot = self
+          if text?
+            pivot = document.create_element("dummy")
+            nxt ? @ref.__add_next_sibling(pivot.__ref) : @ref.__add_previous_sibling(pivot.__ref)
+          end
+          list = nxt ? nodes.to_a.reverse : nodes.to_a
+          list.each do |n|
+            nxt ? pivot.__ref.__add_next_sibling(n.__ref) : pivot.__ref.__add_previous_sibling(n.__ref)
+          end
+          pivot.unlink if text?
+        else
+          nxt ? @ref.__add_next_sibling(nodes.__ref) : @ref.__add_previous_sibling(nodes.__ref)
+        end
+        nodes
       end
 
       # ---- namespaces ----------------------------------------------------
@@ -713,11 +960,12 @@ module Nokogiri
 
       private
 
-      def check_same_document(node)
-        unless @ref.__same_document?(node.__ref)
-          raise ArgumentError, "nokogiri (spinel): moving a node between documents is not supported"
-        end
-        nil
+      # The gem's: a document takes one root element.
+      def check_root_sibling(node_or_tags)
+        p = parent
+        return nil if p.nil? || !p.document?
+        return nil if node_or_tags.is_a?(Node) && (node_or_tags.comment? || node_or_tags.processing_instruction?)
+        raise ArgumentError, "A document may not have multiple root nodes."
       end
     end
 
@@ -732,6 +980,12 @@ module Nokogiri
 
       def create_element(name)
         Node.wrap(@ref.__create_element(name.to_s))
+      end
+
+      # The gem's: a fragment parsed in the root's context (or none).
+      def fragment(tags = nil)
+        return HTML4::DocumentFragment.new(self, tags, root) if html?
+        DocumentFragment.new(self, tags, root)
       end
 
       def create_text_node(text)
@@ -1722,56 +1976,39 @@ module Nokogiri
       end
     end
 
-    # The gem's HTML4 fragment, parsed as it parses one without a context:
-    # the input inside `<html><body>`, and the fragment is the body's
-    # children (or the body itself when the input starts with one).
-    class DocumentFragment
-      def initialize(document, input = "")
-        tags = input.to_s
-        path = tags.match?(/\A\s*?<body/i) ? "/html/body" : "/html/body/node()"
-        @doc = Document.parse("<html><body>" + tags)
-        @frag = XML::Node.new(@doc.__ref.__create_fragment)
-        @doc.xpath(path).to_a.each { |child| @frag.add_child(child) }
+    # The gem's HTML4 fragment. Without a context it is parsed as the gem
+    # parses one: the input inside `<html><body>`, and the fragment is the
+    # body's children (or the body itself when the input starts with one).
+    # With one, inside a <div> in that node's context, the div's children.
+    class DocumentFragment < XML::DocumentFragment
+      def initialize(document, tags = nil, context = nil, options = XML::ParseOptions::DEFAULT_HTML)
+        @errors = []
+        s = tags.to_s
+        if context.nil?
+          path = s.match?(/\A\s*?<body/i) ? "/html/body" : "/html/body/node()"
+          @doc = Document.parse("<html><body>" + s)
+          @frag = XML::Node.new(@doc.__ref.__create_fragment)
+          @doc.xpath(path).to_a.each { |child| @frag.__ref.__add_child(child.__ref) }
+          @errors = @doc.errors
+        else
+          @doc = document
+          @frag = XML::Node.new(document.__ref.__create_fragment)
+          return if tags.nil?
+          before = document.errors.length
+          set = context.parse("<div>" + s + "</div>", options)
+          unless set.empty?
+            set.first.children.each { |child| @frag.__ref.__add_child(child.__ref) }
+          end
+          @errors = document.errors.drop(before)
+        end
       end
 
       def self.parse(tags)
         DocumentFragment.new(nil, tags)
       end
 
-      def document
-        @doc
-      end
-
-      def children
-        @frag.children
-      end
-
-      def css(*rules)
-        children.css(*rules)
-      end
-
-      def at_css(*rules)
-        children.css(*rules).first
-      end
-
-      def xpath(*paths)
-        children.xpath(*paths)
-      end
-
-      def search(*rules)
-        children.search(*rules)
-      end
-
-      def text
-        children.text
-      end
-
-      def to_html
-        children.to_html
-      end
-
       def to_s
-        to_html
+        children.to_html
       end
     end
 

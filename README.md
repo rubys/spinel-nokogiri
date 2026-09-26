@@ -98,6 +98,16 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   default namespace and reads `ns|name`, as the gem does; a reparented
   element is relinked into the namespaces where it lands (the gem's
   `relink_namespace`, without the opt-in `namespace_inheritance`).
+- Markup wherever a node goes, parsed in the context of where it is
+  going (the gem's `Node#parse`, libxml2's `xmlParseInNodeContext`, so
+  `tr.add_child("<td>…")` makes a cell): `add_child`, `<<`,
+  `add_previous_sibling`, `add_next_sibling`, `before`, `after`,
+  `prepend_child`, `replace`, `swap`, `children=`, `inner_html=`,
+  `wrap`; also `Node#parse`, `Node#fragment`, `Document#fragment`,
+  `Nokogiri::XML.fragment` / `XML::DocumentFragment`, and HTML fragments
+  with a context. A node from another document is copied in and a text
+  node is moved as a copy, as the gem does, and the handle passed then
+  holds the node that went in; `dup`.
 - More of `Node`: `ancestors` (and with a selector), `traverse`,
   `matches?`, `elements` / `element_children`, `first_element_child`,
   `last_element_child`, `next_element`, `previous_element`, `classes`,
@@ -136,14 +146,14 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
   `Nokogiri::CSS::SyntaxError` instead; so do pseudo-elements (`::before`)
   and `*|name`.
 - Not yet: `Nokogiri::HTML5` (the gem's vendored gumbo parser — the next
-  version), an IO or file argument to a parse, XML fragments,
-  `create_element`'s contents and attributes arguments, DTDs and
-  validation, XPath variable bindings and custom functions, an XPath
-  expression that is not a node set, a fragment parsed in a context
-  node (so `inner_html=`, `children=`, and `wrap` / `add_child` with a
-  markup String), `Builder`, `Node.new`, moving nodes between documents,
-  custom pseudo-class handlers, and `NodeSet#index`'s block form (use
-  `find_index`; matz/spinel#5097).
+  version), an IO or file argument to a parse, `create_element`'s
+  contents and attributes arguments, DTDs and validation, XPath variable
+  bindings and custom functions, an XPath expression that is not a node
+  set, `Builder`, `Node.new`, custom pseudo-class handlers, a block to
+  `Node#parse` or a fragment's constructor, `NodeSet#wrap`, and
+  `NodeSet#index`'s block form (use `find_index`; matz/spinel#5097). A
+  fragment's `errors` are its own parse's; the gem also replaces the
+  document's with them.
 - libxml2 is built **without iconv**: it decodes UTF-8, UTF-16, ISO-8859-1
   and ASCII itself, which covers a UTF-8 String; a document declaring
   another charset is decoded differently from the gem. Without zlib and
@@ -178,11 +188,17 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
   answer, in HTML and in a default-namespace XML document.
 - `test/nodeset_test.rb` — NodeSet as Enumerable, as a set, and bulk
   edits; the Node conveniences.
+- `test/markup_test.rb` — markup in every editing method, in context
+  (a `<td>` under a `<tr>`); fragments with and without a context;
+  nodes moved between documents and text nodes moved; XML with
+  namespaces and a malformed fragment.
 - `test/xml_test.rb` — XML documents: an Atom feed (default and prefixed
   namespaces, CSS and XPath over them), RSS, CDATA / comment / PI nodes,
   the XML serializer, errors recovered and strict, `remove_namespaces!`,
   namespace relinking.
-- `test/finalizer.rb` — the owners, released (HTML and XML documents).
+- `test/finalizer.rb` — the owners, released (HTML and XML documents,
+  markup edits, and nodes carried from throwaway documents into a kept
+  one).
 
 The snapshots are the gem's answers (Nokogiri 1.19.4), frozen; no
 hand-authored expectations.

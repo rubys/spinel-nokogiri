@@ -41,6 +41,25 @@ xml_made = 0
   bytes += doc.to_xml.length + doc.errors.length
 end
 made += xml_made
+
+# Markup edits and moves between documents: inner_html=, replace with
+# markup, a text node moved, and a node carried from a throwaway document
+# into a kept one -- whose handle then counts on the kept one, so the
+# throwaway can go.
+keeper = Nokogiri::HTML("<div id=\"k\"></div>")
+3000.times do |i|
+  doc = Nokogiri::HTML("<p>a <b>b</b> c</p><ul><li>x</li></ul>")
+  made += 1
+  p = doc.at_css("p")
+  p.inner_html = "<i>#{i}</i> text"
+  doc.at_css("i").replace("<em>e</em> more")
+  doc.at_css("li").add_child(p.children.last)
+  moved = doc.at_css("li")
+  keeper.at_css("#k").add_child(moved) if i % 100 == 0
+  kept << moved if i % 100 == 0
+  bytes += doc.to_html.length
+end
+bytes += keeper.at_css("#k").children.length
 puts "kept detached: #{kept.length}"
 kept = []
 GC.start

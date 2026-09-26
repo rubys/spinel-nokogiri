@@ -458,21 +458,6 @@ void sp_NokoNode_unlink(sp_NokoNode *self)
 	pthread_mutex_unlock(&sp_nk_lock);
 }
 
-/* The reparenting primitives Nokogiri's replace / add_* are built from.
-   libxml2 MERGES adjacent text nodes when it inserts a text node next to
-   one (freeing the inserted one), which would free memory a Ruby handle
-   still points at; Nokogiri avoids it by inserting a copy of a text node,
-   and so does this. Answers the node that is now in the tree. Both nodes
-   must belong to the same document (the Ruby side checks). */
-static xmlNodePtr sp_nk_insertable(sp_NokoNode *self, xmlNodePtr n)
-{
-	if (n->type == XML_TEXT_NODE) {
-		xmlNodePtr copy = xmlDocCopyNode(n, self->owner->doc, 1);
-		return copy;
-	}
-	xmlUnlinkNode(n);
-	return n;
-}
 
 /* Nokogiri's relink_namespace, run on every node it reparents: an element
    (or attribute) with no prefixed namespace takes the one its name's prefix
@@ -539,37 +524,184 @@ static void sp_nk_relink(sp_nk_owner *o, xmlNodePtr n)
 		sp_nk_relink(o, (xmlNodePtr)attr);
 }
 
-static sp_NokoNode *sp_nk_reparented(sp_NokoNode *self, xmlNodePtr r)
+/* The reparenting primitives Nokogiri's add_* are built from -- the gem's
+   reparent_node_with. A node from another document, or a text node, is
+   not moved but COPIED into this document: libxml2 merges an inserted
+   text node into an adjacent one (freeing it), and a node carries its own
+   document's string dictionary. The original is unlinked and listed with
+   its own owner (so every handle to it stays valid), and, as in the gem,
+   the handle the caller passed now holds the node that went in. */
+enum { SP_NK_CHILD, SP_NK_PREV, SP_NK_NEXT, SP_NK_REPLACE };
+
+static sp_NokoNode *sp_nk_reparent(sp_NokoNode *self, sp_RbVal arg, int how)
 {
-	if (r) {
+	sp_NokoNode *h = sp_nk_arg(arg);
+	xmlNodePtr n = h->node, r;
+	if (n->doc != self->owner->doc || n->type == XML_TEXT_NODE) {
+		int default_ns = n->ns != NULL && n->ns->prefix == NULL;
+		xmlNodePtr copy = xmlDocCopyNode(n, self->owner->doc, 1);
+		if (default_ns && copy->ns != NULL && copy->ns->prefix != NULL) {
+			/* xmlNewReconciledNs names a default namespace "default" */
+			xmlFree((xmlChar *)copy->ns->prefix);
+			copy->ns->prefix = NULL;
+		}
+		xmlUnlinkNode(n);
 		pthread_mutex_lock(&sp_nk_lock);
-		sp_nk_relink(self->owner, r);
+		sp_nk_list(h->owner, n);
 		pthread_mutex_unlock(&sp_nk_lock);
+		n = copy;
+	} else {
+		xmlUnlinkNode(n);
 	}
+	if (how == SP_NK_REPLACE && n->type == XML_TEXT_NODE && self->node->next &&
+	    self->node->next->type == XML_TEXT_NODE) {
+		/* libxml2 merges the text that follows into the inserted text,
+		   freeing it; a handle may hold it, so it is listed and a copy
+		   takes its place (the gem's "totally lame" dance). */
+		xmlNodePtr next_text = self->node->next;
+		xmlNodePtr new_next = xmlDocCopyNode(next_text, self->owner->doc, 1);
+		xmlUnlinkNode(next_text);
+		pthread_mutex_lock(&sp_nk_lock);
+		sp_nk_list(self->owner, next_text);
+		pthread_mutex_unlock(&sp_nk_lock);
+		xmlAddNextSibling(self->node, new_next);
+	}
+	if (how == SP_NK_REPLACE) {
+		/* the gem's xmlReplaceNodeWrapper: then merge adjacent text */
+		r = xmlReplaceNode(self->node, n);
+		if (r == self->node)
+			r = n;
+		if (r && r->type == XML_TEXT_NODE) {
+			if (r->prev && r->prev->type == XML_TEXT_NODE)
+				r = xmlTextMerge(r->prev, r);
+			if (r->next && r->next->type == XML_TEXT_NODE)
+				r = xmlTextMerge(r, r->next);
+		}
+		pthread_mutex_lock(&sp_nk_lock);
+		sp_nk_list(self->owner, self->node);
+		pthread_mutex_unlock(&sp_nk_lock);
+	} else if (how == SP_NK_CHILD)
+		r = xmlAddChild(self->node, n);
+	else if (how == SP_NK_PREV)
+		r = xmlAddPrevSibling(self->node, n);
+	else
+		r = xmlAddNextSibling(self->node, n);
+	if (!r)
+		return sp_NokoNode_new(self->cls_id);
+	pthread_mutex_lock(&sp_nk_lock);
+	sp_nk_relink(self->owner, r);
+	if (h->owner != self->owner) {
+		self->owner->refs++;
+		sp_nk_release_locked(h->owner);
+		h->owner = self->owner;
+	}
+	h->node = r;
+	pthread_mutex_unlock(&sp_nk_lock);
 	return sp_nk_wrap(self->cls_id, r, self->owner);
 }
 
 sp_NokoNode *sp_NokoNode_add_previous_sibling(sp_NokoNode *self, sp_RbVal arg)
 {
-	xmlNodePtr n = sp_nk_insertable(self, sp_nk_arg(arg)->node);
-	return sp_nk_reparented(self, xmlAddPrevSibling(self->node, n));
+	return sp_nk_reparent(self, arg, SP_NK_PREV);
 }
 
 sp_NokoNode *sp_NokoNode_add_next_sibling(sp_NokoNode *self, sp_RbVal arg)
 {
-	xmlNodePtr n = sp_nk_insertable(self, sp_nk_arg(arg)->node);
-	return sp_nk_reparented(self, xmlAddNextSibling(self->node, n));
+	return sp_nk_reparent(self, arg, SP_NK_NEXT);
 }
 
 sp_NokoNode *sp_NokoNode_add_child(sp_NokoNode *self, sp_RbVal arg)
 {
-	xmlNodePtr n = sp_nk_insertable(self, sp_nk_arg(arg)->node);
-	return sp_nk_reparented(self, xmlAddChild(self->node, n));
+	return sp_nk_reparent(self, arg, SP_NK_CHILD);
 }
 
-sp_bool sp_NokoNode_same_document_p(sp_NokoNode *self, sp_RbVal other)
+/* Node#replace with one node: it takes this node's place. */
+sp_NokoNode *sp_NokoNode_replace(sp_NokoNode *self, sp_RbVal arg)
 {
-	return self->owner == sp_nk_arg(other)->owner;
+	return sp_nk_reparent(self, arg, SP_NK_REPLACE);
+}
+
+/* Node#dup(level): a copy in the same document (level 1 with its
+   children, 0 without), listed until something puts it into the tree. */
+sp_NokoNode *sp_NokoNode_dup(sp_NokoNode *self, sp_int level)
+{
+	xmlNodePtr n = xmlDocCopyNode(self->node, self->owner->doc, (int)level);
+	if (!n)
+		return sp_NokoNode_new(self->cls_id);
+	pthread_mutex_lock(&sp_nk_lock);
+	sp_nk_list(self->owner, n);
+	pthread_mutex_unlock(&sp_nk_lock);
+	return sp_nk_wrap(self->cls_id, n, self->owner);
+}
+
+/* ---- parsing in a node's context --------------------------------------- */
+
+/* The last in_context parse's top-level nodes, per thread, read out one by
+   one. */
+static SP_TLS xmlNodePtr *sp_nk_ic = NULL;
+static SP_TLS size_t sp_nk_ic_n = 0;
+
+/* Node#in_context(string, options): the gem's -- xmlParseInNodeContext,
+   its errors added to the document's, the child pointers put back when
+   the parse failed, and each top-level node listed with the document
+   (the gem pins them). Answers the number of nodes. */
+sp_int sp_NokoNode_in_context(sp_NokoNode *self, const char *str, sp_int options)
+{
+	xmlNodePtr node = self->node, list = NULL, tmp, it;
+	xmlNodePtr node_children = node->children, doc_children = node->doc->children;
+	int doc_is_empty = node->doc->children == NULL;
+	xmlParserErrors error;
+	sp_nk_errs *e;
+	size_t i;
+
+	free(sp_nk_ic);
+	sp_nk_ic = NULL;
+	sp_nk_ic_n = 0;
+	sp_nk_begin_parse();
+	error = xmlParseInNodeContext(node, str, (int)strlen(str), (int)options, &list);
+	xmlSetStructuredErrorFunc(NULL, NULL);
+	if (error != XML_ERR_OK) {
+		node->doc->children = doc_children;
+		node->children = node_children;
+	}
+	for (it = node->doc->children; it; it = it->next)
+		it->parent = (xmlNodePtr)node->doc;
+	if (error != XML_ERR_OK && doc_is_empty && node->doc->children != NULL) {
+		for (it = node; it->parent; it = it->parent)
+			;
+		if (it->type == XML_DOCUMENT_FRAG_NODE)
+			node->doc->children = NULL;
+	}
+
+	pthread_mutex_lock(&sp_nk_lock);
+	e = &self->owner->errs;
+	for (i = 0; i < sp_nk_parse_errs.n; i++) {
+		if (e->n == e->cap) {
+			e->cap = e->cap ? e->cap * 2 : 8;
+			e->v = (sp_nk_err *)realloc(e->v, e->cap * sizeof(sp_nk_err));
+		}
+		e->v[e->n++] = sp_nk_parse_errs.v[i];
+	}
+	free(sp_nk_parse_errs.v);
+	sp_nk_parse_errs.v = NULL;
+	sp_nk_parse_errs.n = sp_nk_parse_errs.cap = 0;
+	while (list) {
+		tmp = list->next;
+		list->next = NULL;
+		list->prev = NULL;
+		sp_nk_list(self->owner, list);
+		sp_nk_ic = (xmlNodePtr *)realloc(sp_nk_ic, (sp_nk_ic_n + 1) * sizeof(xmlNodePtr));
+		sp_nk_ic[sp_nk_ic_n++] = list;
+		list = tmp;
+	}
+	pthread_mutex_unlock(&sp_nk_lock);
+	return (sp_int)sp_nk_ic_n;
+}
+
+sp_NokoNode *sp_NokoNode_in_context_result(sp_NokoNode *self, sp_int i)
+{
+	xmlNodePtr n = (i >= 0 && (size_t)i < sp_nk_ic_n) ? sp_nk_ic[i] : NULL;
+	return sp_nk_wrap(self->cls_id, n, self->owner);
 }
 
 /* ---- XPath ------------------------------------------------------------- */

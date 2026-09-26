@@ -1,0 +1,37 @@
+["Nokogiri::XML::NodeSet", 3]
+"<p id=\"p1\">one <b>two</b> three<i>i1</i> and <i>i2</i></p>\n"
+"<p id=\"p1\"><em>replaced</em> text</p>\n"
+"<p id=\"p1\">plain &amp; <br> after</p>\n"
+"<table><tr id=\"r\">\n<td>a</td>\n<td>b</td>\n<td>c</td>\n</tr></table>"
+["li"]
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<p id=\"p2\">four</p>tail <b>t</b>"
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<h3>B</h3>\n<p id=\"p2\">four</p>\n<h4>A</h4>tail <b>t</b>"
+2
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<h3>B</h3>\n<p id=\"p3\">new</p>\n<p>newer</p>\n<h4>A</h4>tail <b>t</b>"
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<h2>two</h2>\n<p id=\"p3\">new</p>\n<p>newer</p>\n<h4>A</h4>tail <b>t</b>"
+"<h2><b>bold</b></h2>\n"
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<h2><b>bold</b></h2>\n<p id=\"p3\">new</p>\n<p>newer</p>\n<section class=\"w\"><h4>A</h4></section>tail <b>t</b>"
+"<p id=\"p1\">plain &amp; <br> after</p>\n<hr>\n<h2><b>bold</b></h2>\n<article><p id=\"p3\">new</p></article><p>newer</p>\n<section class=\"w\"><h4>A</h4></section>tail <b>t</b>"
+"<ul id=\"u\">\n<li>first</li>\n<li>x</li>\n<li>y</li>\n</ul>"
+[2, true]
+["td"]
+"<p>df</p>"
+"li"
+"<li>first</li>\n<li>x</li>\n<li>swapped</li>"
+["<p id=\"p1\"><br> after</p>\n", "<h2>\n<b>bold</b>plain &amp; </h2>\n"]
+"h2"
+1
+0
+"body"
+true
+["f1", "f2"]
+3
+"<entry>\n  <id>1</id>\n  <title>T</title>\n  <m:thumb url=\"u\"/>\n</entry>"
+1
+"u"
+"<entry>\n  <id>2</id>\n</entry>"
+"http://www.w3.org/2005/Atom"
+[2, "<a>1</a><b/>"]
+"link"
+[1, "<entry>\n  <id>2</id>\n  <a>\n    <b/>\n  </a>\n</entry>"]
+1
