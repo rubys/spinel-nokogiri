@@ -27,6 +27,11 @@ end
 # gives: a native class is keyed by its last segment, so a native
 # `Nokogiri::XML::Node` would merge with any other `Node` in the program.
 module NokogiriNodePackage
+  # A C string the native side answers is libxml2's (or the package's own)
+  # storage, not a Spinel string, so it is declared `:cstring`: Spinel
+  # copies it onto its string heap. (`:string` would hand Spinel the
+  # pointer as is, and its string functions read the byte before a string
+  # of their own for a header.)
   native_struct "NokoNodeRef", "sp_NokoNode", "sp_NokoNode_fin"
   native_new [], "sp_NokoNode_new"
 
@@ -45,9 +50,9 @@ module NokogiriNodePackage
   native_method :__error_level,      [:int], :int,                  "sp_NokoNode_error_level"
   native_method :__error_line,       [:int], :int,                  "sp_NokoNode_error_line"
   native_method :__error_column,     [:int], :int,                  "sp_NokoNode_error_column"
-  native_method :__error_message,    [:int], :string,               "sp_NokoNode_error_message"
+  native_method :__error_message,    [:int], :cstring,               "sp_NokoNode_error_message"
   native_method :__type,             [], :int,                      "sp_NokoNode_type"
-  native_method :__name,             [], :string,                   "sp_NokoNode_name"
+  native_method :__name,             [], :cstring,                   "sp_NokoNode_name"
   native_method :__first_child,      [], :self,                     "sp_NokoNode_first_child"
   native_method :__last_child,       [], :self,                     "sp_NokoNode_last_child"
   native_method :__next_sibling,     [], :self,                     "sp_NokoNode_next_sibling"
@@ -58,7 +63,7 @@ module NokogiriNodePackage
   native_method :__has_attr?,        [:string], :bool,              "sp_NokoNode_has_attr"
   native_method :__attr,             [:string], :int,               "sp_NokoNode_attr"
   native_method :__attr_count,       [], :int,                      "sp_NokoNode_attr_count"
-  native_method :__attr_name,        [:int], :string,               "sp_NokoNode_attr_name"
+  native_method :__attr_name,        [:int], :cstring,               "sp_NokoNode_attr_name"
   native_method :__set_name,         [:string], :void,              "sp_NokoNode_set_name"
   native_method :__set_attr,         [:string, :string], :void,     "sp_NokoNode_set_attr"
   native_method :__remove_attr,      [:string], :void,              "sp_NokoNode_remove_attr"
@@ -77,8 +82,8 @@ module NokogiriNodePackage
   native_method :__xpath,            [:string, :string], :int,      "sp_NokoNode_xpath"
   native_method :__xpath_result,     [:int], :self,                 "sp_NokoNode_xpath_result"
   native_method :__serialize,        [:int], :int,                  "sp_NokoNode_serialize"
-  native_method :__encoding,         [], :string,                   "sp_NokoNode_encoding"
-  native_method :__version,          [], :string,                   "sp_NokoNode_version"
+  native_method :__encoding,         [], :cstring,                   "sp_NokoNode_encoding"
+  native_method :__version,          [], :cstring,                   "sp_NokoNode_version"
   native_method :__namespace,        [], :int,                      "sp_NokoNode_namespace"
   native_method :__namespace_scopes, [], :int,                      "sp_NokoNode_namespace_scopes"
   native_method :__namespace_definitions, [], :int,                 "sp_NokoNode_namespace_definitions"
