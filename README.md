@@ -101,10 +101,10 @@ from Nokogiri's `patches/libxml2/` applied (they are also in
 A C compiler; nothing else — libxml2 is compiled from `libxml2/` with the
 package (about ten seconds, once; `spin` caches the objects).
 
-Spinel with matz/spinel#5075 and matz/spinel#5076 fixed: before them, a
-multiple assignment to an index target (`link["href"], title, alt = …`,
-which lobsters' Markdowner writes) dropped the write, and `NodeSet#[]` was
-typed from an unrelated `[]` call and did not compile.
+Spinel 5fc203aa or later (matz/spinel#5075 and #5076: before them, a
+multiple assignment to an index target — `link["href"], title, alt = …`,
+which lobsters' Markdowner writes — dropped the write, and `NodeSet#[]` was
+typed from an unrelated `[]` call and did not compile).
 
 ## Tests
 
