@@ -1,0 +1,78 @@
+-- subclasses parse as themselves
+my html4
+four
+my html5
+five
+my xml
+r
+-- new documents, and fragments made in them
+nil
+"UTF-8"
+true
+1
+nil
+"UTF-8"
+true
+1
+true
+"1.0"
+my fragment4
+<b>bold</b> and <i>it</i>
+3
+my fragment5
+<b>bold</b> and <svg><a xlink:href="#x">l</a></svg>
+3
+-- node types on Node
+1
+true
+true
+4
+8
+-- attribute nodes
+["href", "href", "/x", "/x", nil]
+["style", "style", "color: red", "color: red", nil]
+["onclick", "onclick", "evil()", "evil()", nil]
+["title", "title", "t", "t", nil]
+["href", "#icon", "xlink", "http://www.w3.org/1999/xlink"]
+["href", "#h", nil, nil]
+<a href="/x" style="color: red" title="t">a</a>
+<a href="/x" style="color:red;" title="t">a</a>
+color:red;
+"/a b\"c<d>&amp;"
+<a href="/a b&quot;c<d>&amp;amp;" style="color:red;" title="t">a</a>
+<a href="/a b&quot;c<d>&amp;amp;" style="color:red;" title="">a</a>
+nil
+-- text and CDATA nodes
+true
+<b>x</b> & more
+<b>x</b>&lt;b&gt;x&lt;/b&gt; &amp; more
+&lt;b&gt;x&lt;/b&gt; &amp; more
+true
+a < b && c
+<r>
+  <c><![CDATA[a < b && c]]></c>
+</r>
+<r>plain<c><![CDATA[a < b && c]]></c></r>
+-- encode_special_chars
+&lt;a href=&quot;x&quot;&gt;&amp;amp; 'q'&lt;/a&gt;
+-- fragments searched from the fragment node
+false
+  <p>in body</p>
+0
+nil
+2
+["one", "two"]
+false
+<p>one</p><p>two</p>
+2
+<i>x</i><i>y</i>
+-- a fragment's copy is its own
+<p>one <b>two</b></p>
+<p>one </p>
+-- parent=
+<div id="a"><span>s</span></div><div id="b"></div>
+-- the version answers Loofah asks
+true
+nil
+true
+1.19

@@ -407,11 +407,67 @@ void sp_NokoNode_set_attr(sp_NokoNode *self, const char *name, const char *value
 	xmlSetProp(self->node, (const xmlChar *)name, (const xmlChar *)value);
 }
 
+/* Node#remove_attribute: the gem's `attribute(name)&.unlink` -- unlinked,
+   not freed, so a handle to the attribute stays valid (Loofah removes
+   attributes by name while it holds them); listed with the document. */
 void sp_NokoNode_remove_attr(sp_NokoNode *self, const char *name)
 {
 	xmlAttrPtr a = xmlHasProp(self->node, (const xmlChar *)name);
-	if (a)
-		xmlRemoveProp(a);
+	if (!a)
+		return;
+	xmlUnlinkNode((xmlNodePtr)a);
+	pthread_mutex_lock(&sp_nk_lock);
+	sp_nk_list(self->owner, (xmlNodePtr)a);
+	pthread_mutex_unlock(&sp_nk_lock);
+}
+
+/* Node#attribute_nodes: the i-th attribute, as a node of its own
+   (XML::Attr). An xmlAttr shares xmlNode's leading fields, which is how
+   libxml2 itself passes one where a node goes. */
+sp_NokoNode *sp_NokoNode_attr_node(sp_NokoNode *self, sp_int i)
+{
+	xmlAttrPtr a = self->node->type == XML_ELEMENT_NODE ? self->node->properties : NULL;
+	while (a && i-- > 0)
+		a = a->next;
+	return sp_nk_wrap(self->cls_id, (xmlNodePtr)a, self->owner);
+}
+
+/* Node#attribute(name): xmlHasProp, as the gem's is. */
+sp_NokoNode *sp_NokoNode_attr_named(sp_NokoNode *self, const char *name)
+{
+	xmlAttrPtr a = self->node->type == XML_ELEMENT_NODE ? xmlHasProp(self->node, (const xmlChar *)name) : NULL;
+	return sp_nk_wrap(self->cls_id, (xmlNodePtr)a, self->owner);
+}
+
+/* Attr#value=: the gem's set_value (xml_attr.c) -- the old children freed,
+   the value's entities encoded and parsed back into a node list. */
+void sp_NokoNode_set_attr_value(sp_NokoNode *self, const char *value)
+{
+	xmlAttrPtr attr = (xmlAttrPtr)self->node;
+	xmlChar *enc;
+	xmlNodePtr cur;
+	if (attr->type != XML_ATTRIBUTE_NODE)
+		return;
+	if (attr->children)
+		xmlFreeNodeList(attr->children);
+	attr->children = attr->last = NULL;
+	enc = xmlEncodeEntitiesReentrant(attr->doc, (const xmlChar *)value);
+	if (xmlStrlen(enc) == 0)
+		attr->children = xmlNewDocText(attr->doc, enc);
+	else
+		attr->children = xmlStringGetNodeList(attr->doc, enc);
+	xmlFree(enc);
+	for (cur = attr->children; cur; cur = cur->next) {
+		cur->parent = (xmlNodePtr)attr;
+		cur->doc = attr->doc;
+		attr->last = cur;
+	}
+}
+
+/* Node#encode_special_chars: xmlEncodeSpecialChars in the node's document. */
+sp_int sp_NokoNode_encode_special_chars(sp_NokoNode *self, const char *s)
+{
+	return (sp_int)strlen(sp_nk_set_out(xmlEncodeSpecialChars(self->node->doc, (const xmlChar *)s)));
 }
 
 /* Node#content=: Nokogiri encodes the special characters and sets the
@@ -437,6 +493,16 @@ sp_NokoNode *sp_NokoNode_create_element(sp_NokoNode *self, const char *name)
 sp_NokoNode *sp_NokoNode_create_text(sp_NokoNode *self, const char *text)
 {
 	xmlNodePtr n = xmlNewDocText(self->owner->doc, (const xmlChar *)text);
+	pthread_mutex_lock(&sp_nk_lock);
+	sp_nk_list(self->owner, n);
+	pthread_mutex_unlock(&sp_nk_lock);
+	return sp_nk_wrap(self->cls_id, n, self->owner);
+}
+
+/* Document#create_cdata: xmlNewCDataBlock, listed like any new node. */
+sp_NokoNode *sp_NokoNode_create_cdata(sp_NokoNode *self, const char *text)
+{
+	xmlNodePtr n = xmlNewCDataBlock(self->owner->doc, (const xmlChar *)text, (int)strlen(text));
 	pthread_mutex_lock(&sp_nk_lock);
 	sp_nk_list(self->owner, n);
 	pthread_mutex_unlock(&sp_nk_lock);
@@ -1183,6 +1249,28 @@ sp_NokoNode *sp_NokoNode_new_html5_document(sp_NokoNode *self)
 	h = sp_nk_own(self->cls_id, doc);
 	h->owner->html5 = 1;
 	return h;
+}
+
+/* HTML4::Document.new / HTML5::Document.new with no arguments: htmlNewDoc
+   with its default DTD and no encoding, as the gem's new answers. */
+sp_NokoNode *sp_NokoNode_new_html_document(sp_NokoNode *self, sp_bool html5)
+{
+	sp_NokoNode *h;
+	htmlDocPtr doc = htmlNewDoc(NULL, NULL);
+	sp_nk_begin_parse();
+	xmlSetStructuredErrorFunc(NULL, NULL);
+	h = sp_nk_own(self->cls_id, doc);
+	h->owner->html5 = html5 ? 1 : 0;
+	return h;
+}
+
+/* Document#encoding=: the gem's -- the name replaces the document's. */
+void sp_NokoNode_set_encoding(sp_NokoNode *self, const char *encoding)
+{
+	xmlDocPtr doc = self->owner->doc;
+	if (doc->encoding)
+		xmlFree((xmlChar *)doc->encoding);
+	doc->encoding = xmlStrdup((const xmlChar *)encoding);
 }
 
 sp_bool sp_NokoNode_html5_p(sp_NokoNode *self)

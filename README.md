@@ -167,6 +167,20 @@ libxml2 tree everything else here (XPath, CSS, editing) works on.
   included); and markup edited in an HTML5 document is parsed by gumbo
   in context (`tr.add_child("<td>…")`). `Node#document` answers the class
   the document was made as (HTML5, HTML4 or XML).
+- What Loofah and rails-html-sanitizer stand on: a subclass of a
+  document parses as itself (`MyDoc.parse` answers a `MyDoc`), and
+  `Document.new` makes an empty one (XML, HTML4, HTML5), with
+  `encoding=`; `Node#attribute_nodes`, `attribute` and `attributes` answer
+  live `XML::Attr` nodes (`name` / `node_name`, `value` / `value=` as the
+  gem's `set_value` encodes it, `namespace`, `remove`), and
+  `remove_attribute` unlinks rather than frees, so a held attribute stays
+  valid; `XML::Text.new(string, doc)`, `Document#create_cdata`,
+  `Node#encode_special_chars`, `parent=`, `type` and the node-type
+  constants on `XML::Node`; a fragment's `xpath` runs from the fragment
+  node (`fragment.at_xpath("./body")`), and it answers `xml?`, `dup` and
+  `to_html(encoding: "UTF-8")` (any other encoding raises
+  `NotImplementedError`); `Nokogiri::VERSION` (`"1.19.4"`),
+  `uses_gumbo?`, `jruby?` and `VersionInfo.instance.libxml2?`.
 - Not yet: an IO or file argument to a parse, a non-UTF-8 String given to
   `HTML5` (the gem re-encodes one), a block to `HTML5` parse,
   `preserve_newline` and other `write_to` options, `HTML5::Builder`, `create_element`'s
@@ -226,6 +240,9 @@ sh oracle/run.sh   # the SAME test files under CRuby with the real gem
   CSS.
 - `test/html5_corpus_test.rb` — the Markdowner corpus's 3404 documents
   as HTML5 documents and fragments, with their error counts, and edited.
+- `test/loofah_surface_test.rb` — the surface above: subclasses and empty
+  documents, attribute nodes edited and removed, text and CDATA nodes,
+  fragments searched from the fragment node and copied.
 - `test/finalizer.rb` — the owners, released (HTML, HTML5 and XML documents,
   markup edits, and nodes carried from throwaway documents into a kept
   one).

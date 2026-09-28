@@ -42,6 +42,8 @@ module NokogiriNodePackage
   native_method :__new_xml_document, [], :self,                     "sp_NokoNode_new_xml_document"
   native_method :__parse_html5,      [:string, :int, :int, :int, :bool], :self, "sp_NokoNode_parse_html5"
   native_method :__new_html5_document, [], :self,                   "sp_NokoNode_new_html5_document"
+  native_method :__new_html_document, [:bool], :self,               "sp_NokoNode_new_html_document"
+  native_method :__set_encoding,     [:string], :void,              "sp_NokoNode_set_encoding"
   native_method :__html5?,           [], :bool,                     "sp_NokoNode_html5_p"
   native_method :__quirks_mode,      [], :int,                      "sp_NokoNode_quirks_mode"
   native_method :__html5_fragment,   [:string, :string, :int, :bool, :string, :bool, :int, :int, :int, :bool], :int, "sp_NokoNode_html5_fragment"
@@ -67,9 +69,14 @@ module NokogiriNodePackage
   native_method :__set_name,         [:string], :void,              "sp_NokoNode_set_name"
   native_method :__set_attr,         [:string, :string], :void,     "sp_NokoNode_set_attr"
   native_method :__remove_attr,      [:string], :void,              "sp_NokoNode_remove_attr"
+  native_method :__attr_node,        [:int], :self,                 "sp_NokoNode_attr_node"
+  native_method :__attr_named,       [:string], :self,              "sp_NokoNode_attr_named"
+  native_method :__set_attr_value,   [:string], :void,              "sp_NokoNode_set_attr_value"
+  native_method :__encode_special_chars, [:string], :int,           "sp_NokoNode_encode_special_chars"
   native_method :__set_content,      [:string], :void,              "sp_NokoNode_set_content"
   native_method :__create_element,   [:string], :self,              "sp_NokoNode_create_element"
   native_method :__create_text,      [:string], :self,              "sp_NokoNode_create_text"
+  native_method :__create_cdata,     [:string], :self,              "sp_NokoNode_create_cdata"
   native_method :__create_fragment,  [], :self,                     "sp_NokoNode_create_fragment"
   native_method :__unlink,           [], :void,                     "sp_NokoNode_unlink"
   native_method :__add_previous_sibling, [:any], :self,             "sp_NokoNode_add_previous_sibling"
@@ -94,7 +101,30 @@ module NokogiriNodePackage
 end
 
 module Nokogiri
+  # The gem version this package answers as (its snapshots are 1.19.4's).
+  VERSION = "1.19.4"
+
   class SyntaxError < StandardError
+  end
+
+  # HTML5 is gumbo's, as in the gem on CRuby.
+  def self.uses_gumbo?
+    true
+  end
+
+  def self.jruby?
+    nil
+  end
+
+  # The gem's VersionInfo, for the one question libraries ask of it.
+  class VersionInfo
+    def self.instance
+      @instance ||= new
+    end
+
+    def libxml2?
+      true
+    end
   end
 
   # The gem's Nokogiri::XML(string, url, encoding, options) — an XML
@@ -268,16 +298,35 @@ module Nokogiri
         children.css(*rules).first
       end
 
+      # The gem's: XPath from the fragment node (so "./body" is a child
+      # of the fragment); CSS over the children.
       def xpath(*paths)
-        children.xpath(*paths)
+        @frag.xpath(*paths)
       end
 
       def at_xpath(*paths)
-        children.xpath(*paths).first
+        xpath(*paths).first
       end
 
       def search(*rules)
-        children.search(*rules)
+        r = rules.join(", ")
+        Search.looks_like_xpath?(r) ? xpath(r) : children.css(r)
+      end
+
+      def xml?
+        false
+      end
+
+      def html?
+        false
+      end
+
+      # The gem's: a new fragment of the same class, holding copies of
+      # these children.
+      def dup
+        copy = self.class.new(@doc)
+        children.each { |c| copy.add_child(c.dup(1)) }
+        copy
       end
 
       def text
@@ -288,11 +337,13 @@ module Nokogiri
         children.to_html
       end
 
-      def to_html
+      def to_html(encoding: nil)
+        Node.check_encoding(encoding)
         children.to_html
       end
 
-      def to_xml
+      def to_xml(encoding: nil)
+        Node.check_encoding(encoding)
         children.to_xml
       end
 
@@ -392,6 +443,19 @@ module Nokogiri
         DEFAULT_XML = FORMAT | AS_XML
       end
 
+      # The node types, where the gem keeps them (Loofah reads
+      # Nokogiri::XML::Node::ELEMENT_NODE).
+      ELEMENT_NODE = XML::ELEMENT_NODE
+      ATTRIBUTE_NODE = XML::ATTRIBUTE_NODE
+      TEXT_NODE = XML::TEXT_NODE
+      CDATA_SECTION_NODE = XML::CDATA_SECTION_NODE
+      PI_NODE = XML::PI_NODE
+      COMMENT_NODE = XML::COMMENT_NODE
+      DOCUMENT_NODE = XML::DOCUMENT_NODE
+      DOCUMENT_FRAG_NODE = XML::DOCUMENT_FRAG_NODE
+      HTML_DOCUMENT_NODE = XML::HTML_DOCUMENT_NODE
+      DTD_NODE = XML::DTD_NODE
+
       # A handle the native side made. Nokogiri makes nodes through
       # Document#create_element, not Node.new.
       def initialize(ref)
@@ -413,6 +477,18 @@ module Nokogiri
 
       def node_type
         @ref.__type
+      end
+
+      def type
+        node_type
+      end
+
+      def xml?
+        node_type == DOCUMENT_NODE
+      end
+
+      def html?
+        node_type == HTML_DOCUMENT_NODE
       end
 
       def element?
@@ -448,6 +524,10 @@ module Nokogiri
 
       def name=(n)
         @ref.__set_name(n.to_s)
+      end
+
+      def node_name
+        name
       end
 
       # The document, as the class it was made as: an HTML5, HTML4 or XML
@@ -601,21 +681,31 @@ module Nokogiri
         nil
       end
 
+      # The attribute node itself (XML::Attr), or nil.
       def attribute(key)
-        v = self[key]
-        v.nil? ? nil : Attr.new(key.to_s, v)
+        r = @ref.__attr_named(key.to_s)
+        r.__present? ? Attr.new(r) : nil
       end
 
-      # name => Attr, in document order.
-      def attributes
-        h = {}
+      # The attribute nodes, in document order: live, so editing or
+      # removing one edits this element (Loofah's scrubbers do both).
+      def attribute_nodes
+        out = []
         i = 0
         n = @ref.__attr_count
         while i < n
-          k = @ref.__attr_name(i)
-          h[k] = Attr.new(k, self[k].to_s)
+          out << Attr.new(@ref.__attr_node(i))
           i += 1
         end
+        out
+      end
+
+      # name => Attr, in document order (a later attribute with the same
+      # local name, xlink:href after href, replaces the earlier, as in the
+      # gem).
+      def attributes
+        h = {}
+        attribute_nodes.each { |a| h[a.name] = a }
         h
       end
 
@@ -695,6 +785,12 @@ module Nokogiri
         content
       end
 
+      # The gem's: xmlEncodeSpecialChars, in this node's document.
+      def encode_special_chars(s)
+        @ref.__encode_special_chars(s.to_s)
+        NokogiriExt.sp_noko_out
+      end
+
       # The gem's: the special characters are encoded, so "<" stays text.
       def content=(s)
         @ref.__set_content(s.to_s)
@@ -732,6 +828,11 @@ module Nokogiri
       def <<(node_or_tags)
         add_child(node_or_tags)
         self
+      end
+
+      # The gem's: this node moves under the new parent, as its last child.
+      def parent=(parent_node)
+        parent_node.add_child(self)
       end
 
       def add_previous_sibling(node_or_tags)
@@ -961,7 +1062,8 @@ module Nokogiri
 
       # In an HTML5 document, the HTML standard's serialization (the gem's
       # html_standard_serialize); otherwise libxml2's HTML writer.
-      def to_html
+      def to_html(encoding: nil)
+        Node.check_encoding(encoding)
         if @ref.__html5?
           @ref.__html5_serialize(false)
         else
@@ -970,9 +1072,18 @@ module Nokogiri
         NokogiriExt.sp_noko_out
       end
 
-      def to_xml
+      def to_xml(encoding: nil)
+        Node.check_encoding(encoding)
         @ref.__serialize(SaveOptions::DEFAULT_XML)
         NokogiriExt.sp_noko_out
+      end
+
+      # The one encoding a serialization is written in here: UTF-8, the
+      # String's own (see "Subset" in the README). Asking for it by name,
+      # as rails-html-sanitizer does, is the same serialization.
+      def self.check_encoding(encoding)
+        return nil if encoding.nil? || encoding.to_s.upcase == "UTF-8"
+        raise NotImplementedError, "nokogiri (spinel): serializing as #{encoding} is not supported; only UTF-8"
       end
 
       # The gem's: XML in an XML document, HTML in an HTML one.
@@ -996,6 +1107,13 @@ module Nokogiri
     end
 
     class Document < Node
+      # The gem's Document.new: an empty version-1.0 document. A ref is the
+      # document a parse made (parse answers the class it was called on,
+      # so a subclass parses as itself).
+      def initialize(ref = nil)
+        @ref = ref.nil? ? NokoNodeRef.new.__new_xml_document : ref
+      end
+
       def self.wrap(ref)
         return HTML5::Document.new(ref) if ref.__html5?
         return HTML4::Document.new(ref) if ref.__type == HTML_DOCUMENT_NODE
@@ -1024,9 +1142,17 @@ module Nokogiri
         Node.wrap(@ref.__create_text(text.to_s))
       end
 
+      def create_cdata(text)
+        Node.wrap(@ref.__create_cdata(text.to_s))
+      end
+
       def encoding
         e = @ref.__encoding
         e == "" ? nil : e
+      end
+
+      def encoding=(e)
+        @ref.__set_encoding(e.to_s)
       end
 
       def version
@@ -1036,14 +1162,6 @@ module Nokogiri
 
       def name
         "document"
-      end
-
-      def xml?
-        node_type == DOCUMENT_NODE
-      end
-
-      def html?
-        node_type == HTML_DOCUMENT_NODE
       end
 
       # The errors the parse reported, in order (a recovered document keeps
@@ -1078,7 +1196,7 @@ module Nokogiri
         s = xml.to_s
         if s.empty?
           raise SyntaxError.build("Empty document", 0, 0, 0) if config.strict?
-          return Document.new(NokoNodeRef.new.__new_xml_document)
+          return new
         end
         ref = NokoNodeRef.new.__parse_xml(s, encoding.to_s, config.to_i)
         unless ref.__present?
@@ -1086,34 +1204,37 @@ module Nokogiri
           raise SyntaxError.build("Could not parse document", 0, 0, 0) if errs.empty?
           raise errs.last
         end
-        Document.new(ref)
+        new(ref)
       end
     end
 
-    class Attr
-      def initialize(name, value)
-        @name = name
-        @value = value
-      end
-
-      def name
-        @name
-      end
-
+    # An attribute, as the node libxml2 keeps it: live, so value= and
+    # remove edit the element it is on. Node supplies name, namespace,
+    # parent and unlink/remove.
+    class Attr < Node
       def value
-        @value
+        content
       end
 
-      def content
-        @value
+      def value=(v)
+        @ref.__set_attr_value(v.to_s)
+        v
       end
 
-      def text
-        @value
+      def content=(v)
+        self.value = v
       end
 
       def to_s
-        @value
+        content
+      end
+    end
+
+    # The gem's Text.new(string, document): a text node made in the
+    # document (any node of it will do), not yet in the tree.
+    class Text < Node
+      def initialize(string, document)
+        @ref = document.__ref.__create_text(string.to_s)
       end
     end
 
@@ -1990,11 +2111,17 @@ module Nokogiri
 
   module HTML4
     class Document < XML::Document
+      # The gem's HTML4::Document.new: empty, with the default DTD and no
+      # encoding.
+      def initialize(ref = nil)
+        @ref = ref.nil? ? NokoNodeRef.new.__new_html_document(false) : ref
+      end
+
       # The gem's HTML4::Document.parse(string): the String's own encoding
       # (UTF-8) and ParseOptions::DEFAULT_HTML.
       def self.parse(html)
         ref = NokoNodeRef.new.__parse_html(html.to_s, "UTF-8", XML::ParseOptions::DEFAULT_HTML)
-        Document.new(ref)
+        new(ref)
       end
 
       # The gem's, verbatim in effect: a <meta charset>, else the charset of
@@ -2101,6 +2228,11 @@ module Nokogiri
     end
 
     class Document < HTML4::Document
+      # The gem's HTML5::Document.new: HTML4's, marked HTML5.
+      def initialize(ref = nil)
+        @ref = ref.nil? ? NokoNodeRef.new.__new_html_document(true) : ref
+      end
+
       # The gem's HTML5::Document.parse: a String (UTF-8), gumbo's limits
       # as keywords. A limit gumbo hits raises ArgumentError, as in the
       # gem; the errors are kept only up to max_errors (none by default).
@@ -2110,7 +2242,7 @@ module Nokogiri
         ref = NokoNodeRef.new.__parse_html5(html.to_s, max_attributes, max_errors, max_tree_depth,
                                             parse_noscript_content_as_text)
         raise ArgumentError, NokogiriExt.sp_noko_gumbo_status unless ref.__present?
-        Document.new(ref)
+        new(ref)
       end
 
       def quirks_mode
