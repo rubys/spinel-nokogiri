@@ -741,6 +741,33 @@ sp_NokoNode *sp_NokoNode_dup(sp_NokoNode *self, sp_int level)
 	return sp_nk_wrap(self->cls_id, n, self->owner);
 }
 
+/* Document#dup(level): the gem's duplicate_document -- xmlCopyDoc into a
+   document of its own (its own owner, so the copy's nodes are made in and
+   freed with it), keeping the original's errors and its HTML5-ness. */
+sp_NokoNode *sp_NokoNode_dup_document(sp_NokoNode *self, sp_int level)
+{
+	sp_nk_owner *src = self->owner;
+	xmlDocPtr copy = xmlCopyDoc(src->doc, (int)level);
+	sp_NokoNode *h;
+	size_t i;
+	if (!copy)
+		return sp_NokoNode_new(self->cls_id);
+	sp_nk_errs_free(&sp_nk_parse_errs);
+	h = sp_nk_own(self->cls_id, copy);
+	h->owner->html5 = src->html5;
+	h->owner->quirks_mode = src->quirks_mode;
+	if (src->errs.n) {
+		sp_nk_errs *e = &h->owner->errs;
+		e->v = (sp_nk_err *)calloc(src->errs.n, sizeof(sp_nk_err));
+		e->n = e->cap = src->errs.n;
+		for (i = 0; i < src->errs.n; i++) {
+			e->v[i] = src->errs.v[i];
+			e->v[i].message = strdup(src->errs.v[i].message ? src->errs.v[i].message : "");
+		}
+	}
+	return h;
+}
+
 /* ---- parsing in a node's context --------------------------------------- */
 
 /* The last in_context parse's top-level nodes, per thread, read out one by

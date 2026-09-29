@@ -82,6 +82,21 @@ false
 -- a fragment's copy is its own
 <p>one <b>two</b></p>
 <p>one </p>
+-- a document's copy is its own, of its class
+[MyHTML4, "my html4", true]
+<html><body><p>one <b>two</b></p></body></html>
+<html>
+<body><p>one </p></body>!</html>
+[MyHTML5, "my html5", true]
+<html><head></head><body><p>one <b>two</b></p></body></html>
+<html><head></head><body><p>one </p></body>!</html>
+[MyXML, "my xml", false]
+<r>
+  <b>x</b>
+</r>
+<r>!</r>
+1
+1
 -- parent=
 <div id="a"><span>s</span></div><div id="b"></div>
 -- the version answers Loofah asks

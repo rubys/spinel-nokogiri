@@ -75,6 +75,7 @@ module NokogiriNodePackage
   native_method :__encode_special_chars, [:string], :int,           "sp_NokoNode_encode_special_chars"
   native_method :__set_content,      [:string], :void,              "sp_NokoNode_set_content"
   native_method :__set_raw_content,  [:string], :void,              "sp_NokoNode_set_raw_content"
+  native_method :__dup_document,     [:int], :self,                 "sp_NokoNode_dup_document"
   native_method :__create_element,   [:string], :self,              "sp_NokoNode_create_element"
   native_method :__create_text,      [:string], :self,              "sp_NokoNode_create_text"
   native_method :__create_cdata,     [:string], :self,              "sp_NokoNode_create_cdata"
@@ -1131,6 +1132,12 @@ module Nokogiri
         return HTML5::Document.new(ref) if ref.__html5?
         return HTML4::Document.new(ref) if ref.__type == HTML_DOCUMENT_NODE
         Document.new(ref)
+      end
+
+      # The gem's: a copy of the whole document, of this document's class
+      # (a subclass copies as itself), with this one's errors.
+      def dup(level = 1)
+        self.class.new(@ref.__dup_document(level))
       end
 
       def root

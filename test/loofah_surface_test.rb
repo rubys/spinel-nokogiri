@@ -188,6 +188,19 @@ copy.at_css("b").remove
 puts orig.to_s
 puts copy.to_s
 
+puts "-- a document's copy is its own, of its class"
+[MyHTML4.parse("<p>one <b>two</b></p>"), MyHTML5.parse("<p>one <b>two</b></p>"),
+ MyXML.parse("<r><b>x</b></r>")].each do |od|
+  cd = od.dup
+  puts [cd.class, cd.kind, cd.html?].inspect
+  cd.at_css("b").remove
+  cd.root.add_child(cd.create_text_node("!"))
+  puts od.root.to_s
+  puts cd.root.to_s
+end
+puts Nokogiri::HTML5::Document.parse("<p>x").dup.quirks_mode.inspect
+puts Nokogiri::XML("<a><b></a>").dup.errors.length
+
 puts "-- parent="
 pd = Nokogiri::HTML5::Document.parse("<div id=\"a\"></div><div id=\"b\"><span>s</span></div>")
 span = pd.at_css("span")
