@@ -96,3 +96,10 @@ puts p1.inner_html.inspect
 puts doc.css("td:last-child, em, strong").map { |n| n.name }.inspect
 puts doc.at_css("textarea").to_html.inspect
 puts doc.at_css("template").to_html.inspect
+
+puts "-- an embedded NUL is markup, not the end of it"
+nul = "<scr\u0000ipt>alert(1)</scr\u0000ipt><p>a\u0000b</p>"
+puts Nokogiri::HTML5.fragment(nul).to_html.inspect
+puts Nokogiri::HTML5(nul).at_css("body").inner_html.inspect
+puts Nokogiri::HTML4.fragment(nul).to_html.inspect
+puts Nokogiri::XML("<r>a</r>\u0000<x/>").errors.length

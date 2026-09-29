@@ -135,8 +135,36 @@ tx = xdoc.create_text_node("plain")
 xdoc.at_xpath("//c").before(tx)
 puts xdoc.root.to_xml
 
+puts "-- content= is raw on text and CDATA nodes, encoded elsewhere"
+cf = Nokogiri::HTML5::DocumentFragment.parse("<style>a<b \"q\"</style><p>x</p>")
+ct = cf.children.first.children.first
+ct.content = ct.content + " & c"
+puts ct.content
+cp = cf.children[1]
+cp.content = "y<z & \"w\""
+puts cp.content
+puts cf.to_html
+c4 = Nokogiri::HTML4::DocumentFragment.parse("<script>if (a<b) x();</script>")
+cc = c4.children.first.children.first
+cc.content = cc.content.sub("x", "y")
+puts [cc.cdata?, cc.content].inspect
+puts c4.to_html
+
+puts "-- [] by namespace"
+sv = Nokogiri::HTML5::DocumentFragment.parse("<svg><a xlink:href=\"#x\" href=\"h\"><use xlink:href=\"#u\"/></a></svg><p href=\"p\">")
+sa = sv.at_css("a")
+puts [sa["href"], sa["xlink:href"], sa["nope:href"], sa.key?("href")].inspect
+su = sv.children.first.children.first.children.first
+puts [su.name, su["href"], su["xlink:href"], su.key?("href"), su.get_attribute("xlink:href")].inspect
+puts sv.children[1]["href"].inspect
+xd = Nokogiri::XML("<r xmlns:a=\"urn:a\"><e a:k=\"1\" k=\"2\"/></r>")
+xe = xd.at_xpath("//e")
+puts [xe["k"], xe["a:k"], xe["b:k"]].inspect
+
 puts "-- encode_special_chars"
 puts b.encode_special_chars("<a href=\"x\">&amp; 'q'</a>")
+puts Nokogiri::HTML5::DocumentFragment.parse("x").encode_special_chars("<b> & \"c\"")
+puts Nokogiri::HTML4::DocumentFragment.parse("x").encode_special_chars("<b> & \"c\"")
 
 puts "-- fragments searched from the fragment node"
 fb = Nokogiri::HTML4::DocumentFragment.parse("  <body><p>in body</p></body>")

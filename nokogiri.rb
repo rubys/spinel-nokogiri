@@ -74,6 +74,7 @@ module NokogiriNodePackage
   native_method :__set_attr_value,   [:string], :void,              "sp_NokoNode_set_attr_value"
   native_method :__encode_special_chars, [:string], :int,           "sp_NokoNode_encode_special_chars"
   native_method :__set_content,      [:string], :void,              "sp_NokoNode_set_content"
+  native_method :__set_raw_content,  [:string], :void,              "sp_NokoNode_set_raw_content"
   native_method :__create_element,   [:string], :self,              "sp_NokoNode_create_element"
   native_method :__create_text,      [:string], :self,              "sp_NokoNode_create_text"
   native_method :__create_cdata,     [:string], :self,              "sp_NokoNode_create_cdata"
@@ -331,6 +332,12 @@ module Nokogiri
 
       def text
         children.text
+      end
+
+      # The gem's (a fragment is a Node there): xmlEncodeSpecialChars, in the
+      # fragment's document.
+      def encode_special_chars(s)
+        @frag.encode_special_chars(s)
       end
 
       def inner_html
@@ -648,10 +655,10 @@ module Nokogiri
 
       # ---- attributes ------------------------------------------------------
 
+      # The gem's: "href" is the attribute in no namespace, so it does not
+      # find xlink:href; "xlink:href" is looked up by its prefix's namespace.
       def [](key)
-        k = key.to_s
-        return nil unless @ref.__has_attr?(k)
-        @ref.__attr(k)
+        return nil if @ref.__attr(key.to_s) < 0
         NokogiriExt.sp_noko_out
       end
 
@@ -791,9 +798,15 @@ module Nokogiri
         NokogiriExt.sp_noko_out
       end
 
-      # The gem's: the special characters are encoded, so "<" stays text.
+      # The gem's: the special characters are encoded, so "<" stays text --
+      # except on a text or CDATA node, whose content the gem's
+      # XML::Text#content= sets as it is (a CDATA node is a Text there).
       def content=(s)
-        @ref.__set_content(s.to_s)
+        if text? || cdata?
+          @ref.__set_raw_content(s.to_s)
+        else
+          @ref.__set_content(s.to_s)
+        end
         s
       end
 

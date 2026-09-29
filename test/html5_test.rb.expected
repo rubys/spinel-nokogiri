@@ -42,3 +42,8 @@ Nokogiri::HTML5::Document
 ["strong", "td"]
 "<textarea>kept</textarea>"
 "<template><li>t</li></template>"
+-- an embedded NUL is markup, not the end of it
+"<scr�ipt>alert(1)</scr�ipt><p>ab</p>"
+"<scr�ipt>alert(1)</scr�ipt><p>ab</p>"
+"<scr></scr>"
+1

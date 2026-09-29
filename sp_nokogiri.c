@@ -17,6 +17,10 @@
  * Serialization is Nokogiri's: `to_html` is xmlSaveTree through a save
  * context with SaveOptions::DEFAULT_HTML (FORMAT | NO_DECLARATION |
  * NO_EMPTY_TAGS | AS_HTML) and the document's encoding.
+ *
+ * Markup arrives as a Spinel String, and its length is the string's own
+ * (sp_str_byte_len), as Nokogiri reads RSTRING_LEN: an embedded NUL reaches
+ * the parser -- gumbo turns it into U+FFFD -- instead of ending the input.
  */
 
 #include <pthread.h>
@@ -235,7 +239,7 @@ sp_NokoNode *sp_NokoNode_parse_html(sp_NokoNode *self, const char *html, const c
 {
 	htmlDocPtr doc;
 	sp_nk_begin_parse();
-	doc = htmlReadMemory(html, (int)strlen(html), NULL, encoding, (int)options);
+	doc = htmlReadMemory(html, (int)sp_str_byte_len(html), NULL, encoding, (int)options);
 	xmlSetStructuredErrorFunc(NULL, NULL);
 	if (!doc)
 		doc = htmlNewDocNoDtD(NULL, NULL);
@@ -250,7 +254,7 @@ sp_NokoNode *sp_NokoNode_parse_xml(sp_NokoNode *self, const char *xml, const cha
 {
 	xmlDocPtr doc;
 	sp_nk_begin_parse();
-	doc = xmlReadMemory(xml, (int)strlen(xml), NULL, *encoding ? encoding : NULL, (int)options);
+	doc = xmlReadMemory(xml, (int)sp_str_byte_len(xml), NULL, *encoding ? encoding : NULL, (int)options);
 	xmlSetStructuredErrorFunc(NULL, NULL);
 	if (!doc)
 		return sp_NokoNode_new(self->cls_id);
@@ -371,9 +375,32 @@ sp_bool sp_NokoNode_has_attr(sp_NokoNode *self, const char *name)
 	return self->node->type == XML_ELEMENT_NODE && xmlHasProp(self->node, (const xmlChar *)name) != NULL;
 }
 
+/* Node#[](name), the gem's `get`: an unprefixed name is an attribute in
+   no namespace (so "href" does not find xlink:href); "prefix:name" is
+   looked up in the namespace that prefix is bound to here, and as the
+   literal name when it is bound to none. -1 when there is no such
+   attribute. */
 sp_int sp_NokoNode_attr(sp_NokoNode *self, const char *name)
 {
-	return (sp_int)strlen(sp_nk_set_out(xmlGetProp(self->node, (const xmlChar *)name)));
+	xmlNodePtr node = self->node;
+	xmlChar *value = NULL;
+	const char *colon;
+
+	if (node->type != XML_ELEMENT_NODE)
+		return -1;
+	colon = strchr(name, ':');
+	if (colon) {
+		xmlChar *prefix = xmlStrndup((const xmlChar *)name, (int)(colon - name));
+		xmlNsPtr ns = xmlSearchNs(node->doc, node, prefix);
+		xmlFree(prefix);
+		value = ns ? xmlGetNsProp(node, (const xmlChar *)(colon + 1), ns->href)
+		           : xmlGetProp(node, (const xmlChar *)name);
+	} else {
+		value = xmlGetNoNsProp(node, (const xmlChar *)name);
+	}
+	if (!value)
+		return -1;
+	return (sp_int)strlen(sp_nk_set_out(value));
 }
 
 sp_int sp_NokoNode_attr_count(sp_NokoNode *self)
@@ -479,6 +506,13 @@ void sp_NokoNode_set_content(sp_NokoNode *self, const char *text)
 	xmlFree(enc);
 }
 
+/* Text#content=: a text or CDATA node's content, as given (libxml2 sets it
+   raw on those node types). */
+void sp_NokoNode_set_raw_content(sp_NokoNode *self, const char *text)
+{
+	xmlNodeSetContentLen(self->node, (const xmlChar *)text, (int)sp_str_byte_len(text));
+}
+
 /* Document#create_element(name): a new element in this document, listed
    until something puts it into the tree. */
 sp_NokoNode *sp_NokoNode_create_element(sp_NokoNode *self, const char *name)
@@ -502,7 +536,7 @@ sp_NokoNode *sp_NokoNode_create_text(sp_NokoNode *self, const char *text)
 /* Document#create_cdata: xmlNewCDataBlock, listed like any new node. */
 sp_NokoNode *sp_NokoNode_create_cdata(sp_NokoNode *self, const char *text)
 {
-	xmlNodePtr n = xmlNewCDataBlock(self->owner->doc, (const xmlChar *)text, (int)strlen(text));
+	xmlNodePtr n = xmlNewCDataBlock(self->owner->doc, (const xmlChar *)text, (int)sp_str_byte_len(text));
 	pthread_mutex_lock(&sp_nk_lock);
 	sp_nk_list(self->owner, n);
 	pthread_mutex_unlock(&sp_nk_lock);
@@ -731,7 +765,7 @@ sp_int sp_NokoNode_in_context(sp_NokoNode *self, const char *str, sp_int options
 	sp_nk_ic = NULL;
 	sp_nk_ic_n = 0;
 	sp_nk_begin_parse();
-	error = xmlParseInNodeContext(node, str, (int)strlen(str), (int)options, &list);
+	error = xmlParseInNodeContext(node, str, (int)sp_str_byte_len(str), (int)options, &list);
 	xmlSetStructuredErrorFunc(NULL, NULL);
 	if (error != XML_ERR_OK) {
 		node->doc->children = doc_children;
@@ -1195,7 +1229,7 @@ static GumboOptions sp_nk_gumbo_options(sp_int max_attributes, sp_int max_errors
 
 static GumboOutput *sp_nk_gumbo_parse(const GumboOptions *options, const char *input)
 {
-	GumboOutput *output = gumbo_parse_with_options(options, input, strlen(input));
+	GumboOutput *output = gumbo_parse_with_options(options, input, sp_str_byte_len(input));
 	sp_nk_gumbo_status = "";
 	if (output->status != GUMBO_STATUS_OK) {
 		sp_nk_gumbo_status = gumbo_status_to_string(output->status);
@@ -1229,7 +1263,7 @@ sp_NokoNode *sp_NokoNode_parse_html5(sp_NokoNode *self, const char *html, sp_int
 	}
 	sp_nk_build_tree(doc, (xmlNodePtr)doc, output->document);
 	doc->encoding = xmlStrdup((const xmlChar *)"UTF-8");
-	sp_nk_gumbo_errors(output, html, strlen(html));
+	sp_nk_gumbo_errors(output, html, sp_str_byte_len(html));
 	h = sp_nk_own(self->cls_id, doc);
 	h->owner->html5 = 1;
 	h->owner->quirks_mode = (int)output->document->v.document.doc_type_quirks_mode;
@@ -1321,7 +1355,7 @@ sp_int sp_NokoNode_html5_fragment(sp_NokoNode *self, const char *tags, const cha
 	if (!output)
 		return -1;
 	sp_nk_build_tree(doc, self->node, output->root);
-	sp_nk_gumbo_errors(output, tags, strlen(tags));
+	sp_nk_gumbo_errors(output, tags, sp_str_byte_len(tags));
 	gumbo_destroy_output(output);
 	return 0;
 }

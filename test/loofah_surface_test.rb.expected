@@ -53,8 +53,21 @@ a < b && c
   <c><![CDATA[a < b && c]]></c>
 </r>
 <r>plain<c><![CDATA[a < b && c]]></c></r>
+-- content= is raw on text and CDATA nodes, encoded elsewhere
+a<b "q" & c
+y<z & "w"
+<style>a<b "q" & c</style><p>y&lt;z &amp; "w"</p>
+[true, "if (a<b) y();"]
+<script>if (a<b) y();</script>
+-- [] by namespace
+["h", "#x", nil, true]
+["use", nil, "#u", true, "#u"]
+"p"
+["2", "1", nil]
 -- encode_special_chars
 &lt;a href=&quot;x&quot;&gt;&amp;amp; 'q'&lt;/a&gt;
+&lt;b&gt; &amp; &quot;c&quot;
+&lt;b&gt; &amp; &quot;c&quot;
 -- fragments searched from the fragment node
 false
   <p>in body</p>
