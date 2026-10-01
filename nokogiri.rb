@@ -824,7 +824,8 @@ module Nokogiri
       def coerce(data)
         return data if data.is_a?(NodeSet)
         return data.children if data.is_a?(DocumentFragment)
-        return fragment(data).children if data.is_a?(String)
+        # Not `fragment(data)`: spinel refuses to hand the caller's String down a chain of calls it cannot follow to the end.
+        return fragment(data.dup).children if data.is_a?(String)
         return data if data.is_a?(Node) && !data.is_a?(Document)
         raise ArgumentError, "Requires a Node, NodeSet or String argument, and cannot accept a #{data.class}."
       end
