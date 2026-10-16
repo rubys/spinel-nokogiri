@@ -47,3 +47,8 @@ Nokogiri::HTML5::Document
 "<scr�ipt>alert(1)</scr�ipt><p>ab</p>"
 "<scr></scr>"
 1
+"<pre>\n\nfirst</pre><textarea>\nt</textarea><listing>\nl</listing><pre>x</pre><p>\n\np</p>"
+"<pre>\n\n\nfirst</pre><textarea>\n\nt</textarea><listing>\n\nl</listing><pre>x</pre><p>\n\np</p>"
+"<pre>\n\n\nfirst</pre>"
+"<pre>\n\n\nfirst</pre><textarea>\n\nt</textarea><pre>x</pre>"
+"\n\nfirst"

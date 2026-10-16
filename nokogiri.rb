@@ -345,9 +345,9 @@ module Nokogiri
         children.to_html
       end
 
-      def to_html(encoding: nil)
+      def to_html(encoding: nil, preserve_newline: false)
         Node.check_encoding(encoding)
-        children.to_html
+        children.to_html(preserve_newline: preserve_newline)
       end
 
       def to_xml(encoding: nil)
@@ -1077,10 +1077,13 @@ module Nokogiri
 
       # In an HTML5 document, the HTML standard's serialization (the gem's
       # html_standard_serialize); otherwise libxml2's HTML writer.
-      def to_html(encoding: nil)
+      # preserve_newline (HTML5 only, as in the gem): a <pre>, <textarea> or
+      # <listing> whose text starts with a newline writes one more, so the
+      # next parse, which drops the first, keeps the text as it was.
+      def to_html(encoding: nil, preserve_newline: false)
         Node.check_encoding(encoding)
         if @ref.__html5?
-          @ref.__html5_serialize(false)
+          @ref.__html5_serialize(preserve_newline)
         else
           @ref.__serialize(SaveOptions::DEFAULT_HTML)
         end
@@ -1643,8 +1646,8 @@ module Nokogiri
         text
       end
 
-      def to_html
-        @nodes.map { |n| n.to_html }.join
+      def to_html(preserve_newline: false)
+        @nodes.map { |n| n.to_html(preserve_newline: preserve_newline) }.join
       end
 
       def to_xml

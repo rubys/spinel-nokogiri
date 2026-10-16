@@ -103,3 +103,13 @@ puts Nokogiri::HTML5.fragment(nul).to_html.inspect
 puts Nokogiri::HTML5(nul).at_css("body").inner_html.inspect
 puts Nokogiri::HTML4.fragment(nul).to_html.inspect
 puts Nokogiri::XML("<r>a</r>\u0000<x/>").errors.length
+
+# preserve_newline: a <pre>/<textarea>/<listing> whose text starts with a
+# newline writes one more (campfire's auto_link_text), from a fragment, a
+# node and a node set; without it, or with no leading newline, nothing.
+f = Nokogiri::HTML5.fragment("<pre>\n\n\nfirst</pre><textarea>\n\nt</textarea><listing>\n\nl</listing><pre>x</pre><p>\n\np</p>")
+puts f.to_html.inspect
+puts f.to_html(preserve_newline: true).inspect
+puts f.at_css("pre").to_html(preserve_newline: true).inspect
+puts f.css("pre, textarea").to_html(preserve_newline: true).inspect
+puts Nokogiri::HTML5.fragment(f.to_html(preserve_newline: true)).at_css("pre").text.inspect

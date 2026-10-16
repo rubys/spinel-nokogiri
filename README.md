@@ -183,7 +183,7 @@ libxml2 tree everything else here (XPath, CSS, editing) works on.
   `uses_gumbo?`, `jruby?` and `VersionInfo.instance.libxml2?`.
 - Not yet: an IO or file argument to a parse, a non-UTF-8 String given to
   `HTML5` (the gem re-encodes one), a block to `HTML5` parse,
-  `preserve_newline` and other `write_to` options, `HTML5::Builder`, `create_element`'s
+  `write_to` options other than `to_html(preserve_newline:)`, `HTML5::Builder`, `create_element`'s
   contents and attributes arguments, DTDs and validation, XPath variable
   bindings and custom functions, an XPath expression that is not a node
   set, `Builder`, `Node.new`, custom pseudo-class handlers, a block to
